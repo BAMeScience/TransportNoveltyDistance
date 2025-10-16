@@ -178,63 +178,13 @@ def augment(structure: Structure) -> Structure:
     s.translate_sites(range(len(s)), shift, frac_coords=True, to_unit_cell=True)
 
     return s
-
-
-class CrystalGCN(nn.Module):
-    """
-    A simple Graph Convolutional Network (GCN) for crystals, implemented in PyTorch Geometric.
-
-    This model represents each atom as an embedding (learned from its atomic number),
-    passes messages through several GCNConv layers to capture local bonding/environment,
-    and then pools node features into a graph-level embedding for downstream prediction.
-
-    Parameters
-    ----------
-    hidden_dim : int, default=128
-        Dimensionality of the atom/node embeddings and hidden representations.
-    out_dim : int, default=128
-        Dimensionality of the final graph-level embedding (output of the model).
-        Default is same as hidden_dim
-
-    Returns
-    -------
-    An embedding for every structure in the batch
-    """
-    def __init__(self, hidden_dim=128, num_rbf=32):
-        super().__init__()
-        self.emb = nn.Embedding(100, hidden_dim)  # atomic number embedding, up to Z=100
-
-        #self.conv1 = GCNConv(hidden_dim, hidden_dim)
-        self.conv1 = CGConv(hidden_dim, dim=num_rbf)
-        #self.conv2 = GCNConv(hidden_dim, hidden_dim)
-        self.conv2 = CGConv(hidden_dim, dim=num_rbf)
-        #self.conv3 = GCNConv(hidden_dim, hidden_dim)
-        self.conv3 = CGConv(hidden_dim, dim=num_rbf)
-
-        self.lin = nn.Linear(hidden_dim, hidden_dim)
-
-    def forward(self, data):
-        x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
-        x = self.emb(x)  # atomic embeddings
-
-        # vanilla GCN layers
-        x = F.relu(self.conv1(x, edge_index, edge_attr))
-        x = F.relu(self.conv2(x, edge_index, edge_attr))
-        x = F.relu(self.conv3(x, edge_index, edge_attr))
-
-        # pool to graph-level (invariant)
-        x = global_mean_pool(x, data.batch)
-
-        return self.lin(x)
     
-def validate(model, dataset, device='cpu', n_batches=5):
+def validate(model, dataset, device='cpu'):
     model.eval()
     intra_sims, inter_sims = [], []
     with torch.no_grad():
         dataloader = DataLoader(dataset, batch_size=512, shuffle=True, collate_fn=lambda x: x)
         for i, structures in enumerate(dataloader):
-            if i >= n_batches:  # only a few batches for speed
-                break
             graphs1 = [structure_to_graph(augment(s)) for s in structures]
             graphs2 = [structure_to_graph(augment(s)) for s in structures]
             batch1 = Batch.from_data_list(graphs1).to(device)

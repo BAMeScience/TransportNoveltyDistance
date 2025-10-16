@@ -50,7 +50,7 @@ model_names = [
 # ===========================================================
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Loading pretrained GCN model...")
-model = CrystalGCN(hidden_dim=128, device=device).to(device)
+model = EquivariantCrystalGCN(hidden_dim=128).to(device)
 model.load_state_dict(torch.load("gcn_fine.pt", map_location=device))
 print("Loaded weights from gcn_fine.pt ✅")
 
