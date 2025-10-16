@@ -231,7 +231,7 @@ def validate(model, dataset, device='cpu', n_batches=5):
     model.eval()
     intra_sims, inter_sims = [], []
     with torch.no_grad():
-        dataloader = DataLoader(dataset, batch_size=16, shuffle=True, collate_fn=lambda x: x)
+        dataloader = DataLoader(dataset, batch_size=512, shuffle=True, collate_fn=lambda x: x)
         for i, structures in enumerate(dataloader):
             if i >= n_batches:  # only a few batches for speed
                 break
@@ -314,7 +314,7 @@ if __name__ == "__main__":
     # create a PyTorch-Dataset for the Dataloader
     val_set = StructureDataset(str_train)
     # Create Dataloader; Batch size set to 16
-    dataloader = DataLoader(dataset, batch_size=16, shuffle=True, collate_fn=lambda x: x)
+    dataloader = DataLoader(dataset, batch_size=512, shuffle=True, collate_fn=lambda x: x)
     # Define number of epochs
     epochs = 40
     val_intra, val_inter = [], []

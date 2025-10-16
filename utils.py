@@ -3,7 +3,7 @@ import ast
 import torch 
 import json 
 from pymatgen.core.operations import SymmOp
-from pymatgen.core import Structure
+from pymatgen.core import Structure, Lattice
 import warnings 
 from torch_geometric.data import Data
 import numpy as np 
@@ -76,7 +76,7 @@ def read_structure_from_csv(filename: str):
 
 
 
-def structure_to_graph(structure, cutoff=8.0, num_rbf=32):
+def structure_to_graph(structure, cutoff=6.0, num_rbf=32):
     '''
     Converts an atomic structure into a graph suitable
     for graph neural networks (GNNs).
@@ -87,7 +87,7 @@ def structure_to_graph(structure, cutoff=8.0, num_rbf=32):
         Atomic structure containing sites with element types and coordinates.
     cutoff : float, optional
         Maximum distance (in Angstroms) to consider two atoms as neighbors.
-        Defaults to 15.0 Å.
+        Defaults to 6.0 Å.
     num_rbf : int, optional
         Controls the size of the radial basis function (RBF) encoding.
         Defaults to 32.
@@ -157,6 +157,70 @@ def load_structures_from_json_column(df, col="structure"):
             structures.append(s)
         except Exception as e:
             print(f"Skipping row {i}: {type(e).__name__} - {e}")
+    return structures
+
+
+def novelty_score(gen_feats, train_feats, threshold=0.05):
+    """
+    Fraction of generated samples farther than `threshold` from all training samples.
+    """
+    D = torch.cdist(gen_feats, train_feats, p=2)
+    min_dists = D.min(dim=1).values
+    return (min_dists > threshold).float().mean().item()
+
+def coverage_score(train_feats, gen_feats, threshold=0.05):
+    """
+    Fraction of training samples that have at least one generated sample within `threshold`.
+    """
+    D = torch.cdist(train_feats, gen_feats, p=2)
+    min_dists = D.min(dim=1).values
+    return (min_dists <= threshold).float().mean().item()
+
+def load_wyckoff_structures(df):
+    """
+    Reconstructs full pymatgen.Structure objects from Wyckoff-format model outputs.
+    Works for WyFormer, SymmCD, etc. where structure info is split across columns.
+    """
+
+    structures = []
+    for i, row in df.iterrows():
+        try:
+            # --- Parse lattice ---
+            if "lattice" in df.columns:
+                lattice_dict = json.loads(row["lattice"]) if isinstance(row["lattice"], str) else row["lattice"]
+                lattice = Lattice.from_parameters(**lattice_dict)
+            else:
+                # Fallback: cubic dummy (rarely needed)
+                lattice = Lattice.cubic(5.0)
+
+            # --- Parse coordinates ---
+            if "sites" in df.columns:
+                sites = json.loads(row["sites"]) if isinstance(row["sites"], str) else row["sites"]
+                coords = [s["abc"] if "abc" in s else s for s in sites]
+            elif "sites_enumeration" in df.columns:
+                coords = json.loads(row["sites_enumeration"]) if isinstance(row["sites_enumeration"], str) else row["sites_enumeration"]
+            else:
+                raise ValueError("No site coordinates found.")
+
+            # --- Parse elements/species ---
+            species = json.loads(row["species"]) if isinstance(row["species"], str) else row["species"]
+            if isinstance(species[0], dict):
+                species = [list(s.keys())[0] for s in species]  # if dict like {'Na':1}
+
+            # --- Construct structure ---
+            struct = Structure(
+                lattice=lattice,
+                species=species,
+                coords=coords,
+                coords_are_cartesian=False
+            )
+            structures.append(struct)
+
+        except Exception as e:
+            print(f"Skipping row {i}: {type(e).__name__} - {e}")
+            continue
+
+    print(f"✅ Reconstructed {len(structures)} structures from Wyckoff CSV.")
     return structures
 
 def perturb_structures(original_structures, mode="lattice_scale", strength=0.1, rng=None):

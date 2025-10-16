@@ -2,7 +2,7 @@ import torch
 import ot
 import torch.nn.functional as F
 from torch_geometric.data import Batch
-from gcn import CrystalGCN
+from gcn import *
 from utils import *
 
 class OTNoveltyScorer:
@@ -36,7 +36,7 @@ class OTNoveltyScorer:
             self.model = gnn_model.to(device)
             self.featurizer = self.model.featurize
         else:
-            self.model = CrystalGCN(device=device).to(device)
+            self.model = EquivariantCrystalGCN(device=device).to(device)
             print("No GNN provided → using default CrystalGCN.")
             # load pretrained weights 
             weights = torch.load('gcn_fine.pt')
@@ -62,7 +62,7 @@ class OTNoveltyScorer:
         C = torch.cdist(f1, f2)
         a = torch.full((f1.size(0),), 1.0 / f1.size(0))
         b = torch.full((f2.size(0),), 1.0 / f2.size(0))
-        P = torch.from_numpy(ot.sinkhorn(a.numpy(), b.numpy(), C.cpu().numpy(), reg = 0.05)).to(C.device)
+        P = torch.from_numpy(ot.emd(a.numpy(), b.numpy(), C.cpu().numpy())).to(C.device)
         d_flat, w_flat = C.flatten(), P.flatten() / P.sum()
         sorted_idx = torch.argsort(d_flat)
         cumw = torch.cumsum(w_flat[sorted_idx], dim=0)
@@ -73,8 +73,8 @@ class OTNoveltyScorer:
     def _get_ot_plan(self, X, Y, reg = 0.01):
         a = torch.ones(X.size(0)) / X.size(0)
         b = torch.ones(Y.size(0)) / Y.size(0)
-        C = torch.cdist(X, Y)
-        P = torch.from_numpy(ot.sinkhorn(a.numpy(), b.numpy(), C.cpu().numpy(), reg = 0.05)).to(C.device)
+        C = torch.cdist(X, Y, metric = 'euclidean')
+        P = torch.from_numpy(ot.emd(a.numpy(), b.numpy(), C.cpu().numpy())).to(C.device)
         return P, C
 
 
@@ -87,8 +87,8 @@ class OTNoveltyScorer:
         P, C = self._get_ot_plan(self.train_feats, gen_feats)
 
         cost = C - self.tau
-        quality = torch.relu(cost) ** 2
-        memory = torch.relu(-cost) ** 2
+        quality = torch.relu(cost)
+        memory = torch.relu(-cost) 
         qual_comp = torch.sum(P * quality)
         mem_comp = torch.sum(P * memory) * self.m_weight
         total = qual_comp + mem_comp
