@@ -72,6 +72,8 @@ class EquivariantCrystalGCN(nn.Module):
             for _ in range(n_layers)
         ])
         self.lin = nn.Linear(hidden_dim, hidden_dim)
+        self.lattice_scale_abc = 10
+        self.lattice_scale_angles = 180 
 
     def forward(self, data):
         x = self.emb(data.x).float()
@@ -84,6 +86,31 @@ class EquivariantCrystalGCN(nn.Module):
         # Invariant pooling
         x = global_mean_pool(x, data.batch)
         return self.lin(F.relu(x))
+
+    # ---- integrated featurizer ----
+    def featurize(self, structures):
+        """
+        Converts a list of pymatgen.Structure objects to normalized embeddings.
+        Includes scaled lattice parameters [a,b,c,α,β,γ] if lattice_scale > 0.
+        """
+        self.eval()
+        with torch.no_grad():
+            graphs = [structure_to_graph(s) for s in structures]
+            batch = Batch.from_data_list(graphs).to(self.device)
+            z = F.normalize(self(batch), dim=1)
+
+            lat_feats = []
+            for s in structures:
+                a, b, c = s.lattice.a, s.lattice.b, s.lattice.c
+                alpha, beta, gamma = s.lattice.alpha, s.lattice.beta, s.lattice.gamma
+                lat = np.array([a, b, c, alpha, beta, gamma], dtype=np.float32)
+                lat /= np.array([self.lattice_scale_abc, self.lattice_scale_abc, self.lattice_scale_abc,
+                                    self.lattice_scale_angles, self.lattice_scale_angles, self.lattice_scale_angles])  # normalize
+                lat_feats.append(lat)
+            lat_feats = torch.tensor(lat_feats, device=z.device)
+            z = torch.cat([z,  lat_feats], dim=1)
+
+        return z.cpu()
 
 class StructureDataset(Dataset):
     '''
