@@ -260,8 +260,8 @@ def get_scaled_distance_matrix(features1, features2):
 def get_novelty_loss_only_fine(P, C, tau=0.2, memorization_weight=10.0):
     """Single fine-space OT loss: ⟨P, (C - tau)^2⟩."""
     cost = (C - tau)
-    quality_cost = torch.relu(cost)**2  # max(C - tau, 0)^2
-    memorization_cost = torch.relu(-cost)**2  # max(tau - C, 0)^2
+    quality_cost = torch.relu(cost)  # max(C - tau, 0)
+    memorization_cost = torch.relu(-cost) # max(tau - C, 0)
     mem_comp = torch.sum(memorization_weight * memorization_cost*P)
     qual_comp = torch.sum(quality_cost*P)
 
