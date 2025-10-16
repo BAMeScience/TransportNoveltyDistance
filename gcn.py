@@ -64,7 +64,7 @@ class EGNNLayer(nn.Module):
 
     
 class EquivariantCrystalGCN(nn.Module):
-    def __init__(self, hidden_dim=128, num_rbf=32, n_layers=3):
+    def __init__(self, hidden_dim=128, num_rbf=32, n_layers=3, device = 'cuda'):
         super().__init__()
         self.emb = nn.Embedding(100, hidden_dim)
         self.layers = nn.ModuleList([
@@ -74,6 +74,7 @@ class EquivariantCrystalGCN(nn.Module):
         self.lin = nn.Linear(hidden_dim, hidden_dim)
         self.lattice_scale_abc = 10
         self.lattice_scale_angles = 180 
+        self.device = device
 
     def forward(self, data):
         x = self.emb(data.x).float()
