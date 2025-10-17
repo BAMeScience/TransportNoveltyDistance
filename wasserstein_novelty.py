@@ -59,7 +59,7 @@ class OTNoveltyScorer:
         idx = torch.randperm(n)
         f1, f2 = fine_features[idx[:n1]], fine_features[idx[n1:]]
 
-        C = torch.cdist(f1, f2)
+        C = ot.dist(f1, f2, metric = 'euclidean')
         a = torch.full((f1.size(0),), 1.0 / f1.size(0))
         b = torch.full((f2.size(0),), 1.0 / f2.size(0))
         P = torch.from_numpy(ot.emd(a.numpy(), b.numpy(), C.cpu().numpy())).to(C.device)
