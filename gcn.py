@@ -113,6 +113,7 @@ class EquivariantCrystalGCN(nn.Module):
 
         return z.cpu()
 
+
 class StructureDataset(Dataset):
     '''
     Dataset creation for the Tensorflow Dataloader
@@ -143,16 +144,21 @@ def read_structure_from_csv(filename: str):
     return structures
 
 
-
 def structure_to_graph(structure, cutoff=8.0, num_rbf=32):
     N = len(structure)
     z = torch.tensor([site.specie.Z for site in structure], dtype=torch.long)
-
-    # positions (cartesian)
     pos = torch.tensor(structure.cart_coords, dtype=torch.float)
 
-    # build neighbor list
-    nns = MinimumDistanceNN(cutoff=cutoff).get_all_nn_info(structure)
+    # Try to compute neighbors, but skip problematic sites
+    mdnn = MinimumDistanceNN(cutoff=cutoff)
+    nns = []
+    for i in range(N):
+        try:
+            neighs = mdnn.get_nn_info(structure, i)
+        except ValueError:
+            # Site has no neighbors (empty sequence)
+            neighs = []
+        nns.append(neighs)
 
     edge_index = []
     edge_attr = []
@@ -161,6 +167,9 @@ def structure_to_graph(structure, cutoff=8.0, num_rbf=32):
     gamma = 10.0
 
     for i, neighs in enumerate(nns):
+        if not neighs:
+            # Skip isolated atoms
+            continue
         for n in neighs:
             j = n['site_index']
             d = n['weight']
@@ -168,10 +177,14 @@ def structure_to_graph(structure, cutoff=8.0, num_rbf=32):
             rbf = torch.exp(-gamma * (d - centers)**2)
             edge_attr.append(rbf)
 
-    edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-    edge_attr = torch.stack(edge_attr)
+    if len(edge_index) == 0:
+        # Handle completely isolated structure
+        edge_index = torch.zeros((2, 0), dtype=torch.long)
+        edge_attr = torch.zeros((0, num_rbf))
+    else:
+        edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+        edge_attr = torch.stack(edge_attr)
 
-    # include positions
     return Data(x=z, pos=pos, edge_index=edge_index, edge_attr=edge_attr)
 
 def augment(structure: Structure) -> Structure:
@@ -206,13 +219,63 @@ def augment(structure: Structure) -> Structure:
     s.translate_sites(range(len(s)), shift, frac_coords=True, to_unit_cell=True)
 
     return s
+
+
+class CrystalGCN(nn.Module):
+    """
+    A simple Graph Convolutional Network (GCN) for crystals, implemented in PyTorch Geometric.
+
+    This model represents each atom as an embedding (learned from its atomic number),
+    passes messages through several GCNConv layers to capture local bonding/environment,
+    and then pools node features into a graph-level embedding for downstream prediction.
+
+    Parameters
+    ----------
+    hidden_dim : int, default=128
+        Dimensionality of the atom/node embeddings and hidden representations.
+    out_dim : int, default=128
+        Dimensionality of the final graph-level embedding (output of the model).
+        Default is same as hidden_dim
+
+    Returns
+    -------
+    An embedding for every structure in the batch
+    """
+    def __init__(self, hidden_dim=128, num_rbf=32):
+        super().__init__()
+        self.emb = nn.Embedding(100, hidden_dim)  # atomic number embedding, up to Z=100
+
+        #self.conv1 = GCNConv(hidden_dim, hidden_dim)
+        self.conv1 = CGConv(hidden_dim, dim=num_rbf)
+        #self.conv2 = GCNConv(hidden_dim, hidden_dim)
+        self.conv2 = CGConv(hidden_dim, dim=num_rbf)
+        #self.conv3 = GCNConv(hidden_dim, hidden_dim)
+        self.conv3 = CGConv(hidden_dim, dim=num_rbf)
+
+        self.lin = nn.Linear(hidden_dim, hidden_dim)
+
+    def forward(self, data):
+        x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
+        x = self.emb(x)  # atomic embeddings
+
+        # vanilla GCN layers
+        x = F.relu(self.conv1(x, edge_index, edge_attr))
+        x = F.relu(self.conv2(x, edge_index, edge_attr))
+        x = F.relu(self.conv3(x, edge_index, edge_attr))
+
+        # pool to graph-level (invariant)
+        x = global_mean_pool(x, data.batch)
+
+        return self.lin(x)
     
-def validate(model, dataset, device='cpu'):
+def validate(model, dataset, device='cpu', n_batches=5):
     model.eval()
     intra_sims, inter_sims = [], []
     with torch.no_grad():
         dataloader = DataLoader(dataset, batch_size=512, shuffle=True, collate_fn=lambda x: x)
         for i, structures in enumerate(dataloader):
+            if i >= n_batches:  # only a few batches for speed
+                break
             graphs1 = [structure_to_graph(augment(s)) for s in structures]
             graphs2 = [structure_to_graph(augment(s)) for s in structures]
             batch1 = Batch.from_data_list(graphs1).to(device)
@@ -281,7 +344,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 if __name__ == "__main__":
 
     # load the model and set input and ouput dimensions
-    model = EquivariantCrystalGCN(hidden_dim=128, num_rbf=32).to(device)
+    model = EquivariantCrystalGCN(hidden_dim=32, num_rbf=32).to(device)
     # define the optimizer
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
     # read structures from the csv
@@ -294,7 +357,7 @@ if __name__ == "__main__":
     # Create Dataloader; Batch size set to 16
     dataloader = DataLoader(dataset, batch_size=512, shuffle=True, collate_fn=lambda x: x)
     # Define number of epochs
-    epochs = 40
+    epochs = 20
     val_intra, val_inter = [], []
 
     for epoch in range(epochs):
