@@ -123,27 +123,10 @@ class OTNoveltyScorer:
         return optimal_tau, m_scale
 
     # ======================================================
-    def _estimate_tau_ot(self, fine_features, split_ratio=0.5, quantile=0.5):
-        n = fine_features.size(0)
-        n1 = int(split_ratio * n)
-        idx = torch.randperm(n)
-        f1, f2 = fine_features[idx[:n1]], fine_features[idx[n1:]]
-
-        C = ot.dist(f1, f2, metric = 'euclidean')
-        a = torch.full((f1.size(0),), 1.0 / f1.size(0))
-        b = torch.full((f2.size(0),), 1.0 / f2.size(0))
-        P = torch.from_numpy(ot.emd(a.numpy(), b.numpy(), C.cpu().numpy())).to(C.device)
-        d_flat, w_flat = C.flatten(), P.flatten() / P.sum()
-        sorted_idx = torch.argsort(d_flat)
-        cumw = torch.cumsum(w_flat[sorted_idx], dim=0)
-        cutoff = torch.searchsorted(cumw, quantile)
-        return d_flat[sorted_idx[min(cutoff, len(cumw) - 1)]].item()
-
-    # ======================================================
     def _get_ot_plan(self, X, Y, reg = 0.01):
         a = torch.ones(X.size(0)) / X.size(0)
         b = torch.ones(Y.size(0)) / Y.size(0)
-        C = torch.cdist(X, Y, metric = 'euclidean')
+        C = ot.dist(X, Y, metric = 'euclidean')
         P = torch.from_numpy(ot.emd(a.numpy(), b.numpy(), C.cpu().numpy())).to(C.device)
         return P, C
 
