@@ -5,14 +5,15 @@ from torch_geometric.data import Batch
 from gcn import *
 from utils import *
 
+
 class OTNoveltyScorer:
     def __init__(self,
                  train_structures,
                  gnn_model=None,
                  featurizer=None,
                  tau=None,
-                 tau_quantile=0.05,
-                 memorization_weight=10.0,
+                 tau_quantile=None,
+                 memorization_weight=None,
                  device="cuda"):
         """
         Compute fine-space OT-based novelty loss.
@@ -49,8 +50,77 @@ class OTNoveltyScorer:
         print(f"Training embeddings shape: {self.train_feats.shape}")
 
         # --- τ ---
-        self.tau = tau or self._estimate_tau_ot(self.train_feats, quantile=tau_quantile)
-        print(f"Using τ = {self.tau:.4f}")
+        if tau is None:
+            tau, m_scale = self.calibrate_principled_tau()  
+            self.tau = tau
+            self.m_weight = m_scale 
+        else:
+            self.tau = tau
+            self.m_weight = memorization_weight 
+        print(f"Using τ = {self.tau:.4f}", f"with memorization weight = {self.m_weight:.4f}")
+
+    # ======================================================
+    def _estimate_tau_ot(self, fine_features, split_ratio=0.5, quantile=0.5):
+        n = fine_features.size(0)
+        n1 = int(split_ratio * n)
+        idx = torch.randperm(n)
+        f1, f2 = fine_features[idx[:n1]], fine_features[idx[n1:]]
+
+        C = ot.dist(f1, f2, metric = 'euclidean')
+        a = torch.full((f1.size(0),), 1.0 / f1.size(0))
+        b = torch.full((f2.size(0),), 1.0 / f2.size(0))
+        P = torch.from_numpy(ot.emd(a.numpy(), b.numpy(), C.cpu().numpy())).to(C.device)
+        d_flat, w_flat = C.flatten(), P.flatten() / P.sum()
+        sorted_idx = torch.argsort(d_flat)
+        cumw = torch.cumsum(w_flat[sorted_idx], dim=0)
+        cutoff = torch.searchsorted(cumw, quantile)
+        return d_flat[sorted_idx[min(cutoff, len(cumw) - 1)]].item()
+    
+
+    def calibrate_principled_tau(self):
+        """
+        Estimates a principled τ by finding the optimal decision boundary
+        between "trivial copy" and "meaningful" distance distributions,
+        calculated from the full training set.
+        """
+        if len(self.train_structs) < 2:
+            raise ValueError("Principled calibration requires at least 2 training structures.")
+
+        # 1. "Meaningful Distance" Distribution (D_loocv)
+        #    This is the leave-one-out nearest neighbor distance for the full set.
+        pairwise_dists_full = ot.dist(self.train_feats, self.train_feats, metric='euclidean')
+        pairwise_dists_full.fill_diagonal_(float('inf'))
+        d_loocv = pairwise_dists_full.min(dim=1).values
+
+        # 2. "Trivial Copy" Distribution (D_aug)
+        #    Augment the full training set and measure distance back to the full set.
+        augmented_structs = [augment(s) for s in self.train_structs]
+        aug_feats = self.featurizer(augmented_structs).to(self.device)
+        # Note: We find min distance to the *original* full training set.
+        d_aug = ot.dist(aug_feats, self.train_feats, metric='euclidean').min(dim=1).values
+        
+        print(f"Debug Info: d_aug mean={d_aug.mean():.4f}, d_loocv mean={d_loocv.mean():.4f}")
+
+        # 3. Brute-force the optimal decision boundary (τ)
+        all_distances = torch.cat([d_aug, d_loocv])
+        # Labels: 1 for "trivial copy", 0 for "meaningful distance"
+        labels = torch.cat([torch.ones_like(d_aug), torch.zeros_like(d_loocv)])
+
+        min_error = float('inf')
+        optimal_tau = (d_aug.mean() + d_loocv.mean()) / 2.0
+
+        for tau_candidate in torch.unique(all_distances):
+            # Prediction: 1 if distance is less than tau (i.e., a trivial copy)
+            predictions = (all_distances < tau_candidate).float()
+            error = torch.abs(predictions - labels).sum()
+
+            if error < min_error:
+                min_error = error
+                optimal_tau = tau_candidate.item()
+
+        m_scale = (d_loocv.mean()+2*d_loocv.std()-optimal_tau)/(optimal_tau-d_aug.mean())
+        
+        return optimal_tau, m_scale
 
     # ======================================================
     def _estimate_tau_ot(self, fine_features, split_ratio=0.5, quantile=0.5):
