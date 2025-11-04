@@ -29,7 +29,6 @@ class EGNNLayer(nn.Module):
             nn.SiLU(),
             nn.Linear(hidden_features, in_features)
         )
-        # 🔧 NEW: scalar projection for coordinate update
         self.coord_mlp = nn.Sequential(
             nn.Linear(hidden_features, 1),
             nn.SiLU()
@@ -40,7 +39,7 @@ class EGNNLayer(nn.Module):
         rij = pos[row] - pos[col]
         dij = (rij ** 2).sum(dim=-1, keepdim=True)
 
-        # message construction
+        # construct invariant edge messages
         if edge_attr is not None:
             edge_input = torch.cat([x[row], x[col], dij, edge_attr], dim=-1)
         else:
@@ -48,20 +47,20 @@ class EGNNLayer(nn.Module):
 
         m_ij = self.edge_mlp(edge_input)
 
-        # aggregate messages (scalar)
+        # aggregate node updates (invariant)
         agg = torch.zeros_like(x)
         agg.index_add_(0, row, m_ij)
-        x = self.node_mlp(torch.cat([x, agg], dim=-1))
+        x = x + self.node_mlp(torch.cat([x, agg], dim=-1))
 
-        # 🧭 Position update (equivariant)
-        w_ij = self.coord_mlp(m_ij)             # [num_edges, 1]
-        trans = rij * w_ij                      # [num_edges, 3]
+        # position update (equivariant)
+        w_ij = self.coord_mlp(m_ij)                   # [num_edges, 1]
+        rij_norm = rij / (rij.norm(dim=-1, keepdim=True) + 1e-8)
+        trans = rij_norm * w_ij                       # direction * scalar weight
         delta = torch.zeros_like(pos)
         delta.index_add_(0, row, trans)
-        pos = pos + 0.01 * delta                # scaled shift
+        pos = pos + delta                             # ✅ no arbitrary 0.01
 
         return x, pos
-
     
 class EquivariantCrystalGCN(nn.Module):
     def __init__(self, hidden_dim=128, num_rbf=32, n_layers=3, device = 'cuda'):
@@ -92,26 +91,40 @@ class EquivariantCrystalGCN(nn.Module):
     def featurize(self, structures):
         """
         Converts a list of pymatgen.Structure objects to normalized embeddings.
-        Includes scaled lattice parameters [a,b,c,α,β,γ] if lattice_scale > 0.
+        Uses Niggli reduction for lattice canonicalization before extracting
+        [a, b, c, α, β, γ] features. These are invariant under rotation and translation.
         """
         self.eval()
         with torch.no_grad():
+            # graph embeddings (invariant part)
             graphs = [structure_to_graph(s) for s in structures]
             batch = Batch.from_data_list(graphs).to(self.device)
             z = F.normalize(self(batch), dim=1)
 
+            # lattice features (canonicalized)
             lat_feats = []
             for s in structures:
-                a, b, c = s.lattice.a, s.lattice.b, s.lattice.c
-                alpha, beta, gamma = s.lattice.alpha, s.lattice.beta, s.lattice.gamma
+                # 🔧 Niggli reduction gives a unique cell representation
+                s_red = s.get_reduced_structure(reduction_algo="niggli")
+
+                a, b, c = s_red.lattice.a, s_red.lattice.b, s_red.lattice.c
+                alpha, beta, gamma = s_red.lattice.alpha, s_red.lattice.beta, s_red.lattice.gamma
+
+                # normalize by preset scaling constants
                 lat = np.array([a, b, c, alpha, beta, gamma], dtype=np.float32)
-                lat /= np.array([self.lattice_scale_abc, self.lattice_scale_abc, self.lattice_scale_abc,
-                                    self.lattice_scale_angles, self.lattice_scale_angles, self.lattice_scale_angles])  # normalize
+                lat /= np.array(
+                    [self.lattice_scale_abc, self.lattice_scale_abc, self.lattice_scale_abc,
+                    self.lattice_scale_angles, self.lattice_scale_angles, self.lattice_scale_angles],
+                    dtype=np.float32
+                )
                 lat_feats.append(lat)
+
+            # stack and concatenate
             lat_feats = torch.tensor(lat_feats, device=z.device)
-            z = torch.cat([z,  lat_feats], dim=1)
+            z = torch.cat([z, lat_feats], dim=1)
 
         return z.cpu()
+
 
 
 class StructureDataset(Dataset):
@@ -221,6 +234,8 @@ def augment(structure: Structure) -> Structure:
     return s
 
 
+
+
 class CrystalGCN(nn.Module):
     """
     A simple Graph Convolutional Network (GCN) for crystals, implemented in PyTorch Geometric.
@@ -268,14 +283,14 @@ class CrystalGCN(nn.Module):
 
         return self.lin(x)
     
-def validate(model, dataset, device='cpu', n_batches=5):
+
+
+def validate(model, dataset, device='cpu'):
     model.eval()
     intra_sims, inter_sims = [], []
     with torch.no_grad():
-        dataloader = DataLoader(dataset, batch_size=512, shuffle=True, collate_fn=lambda x: x)
+        dataloader = DataLoader(dataset, batch_size=128, shuffle=True, collate_fn=lambda x: x)
         for i, structures in enumerate(dataloader):
-            if i >= n_batches:  # only a few batches for speed
-                break
             graphs1 = [structure_to_graph(augment(s)) for s in structures]
             graphs2 = [structure_to_graph(augment(s)) for s in structures]
             batch1 = Batch.from_data_list(graphs1).to(device)
@@ -299,7 +314,7 @@ def validate(model, dataset, device='cpu', n_batches=5):
     return np.mean(intra_sims), np.mean(inter_sims)
 
 
-def info_nce_loss(z1, z2, tau=0.1):
+def info_nce_loss(z1, z2, tau=1.):
     """
     Compute the InfoNCE (contrastive) loss between two batches of embeddings.
     Typically used in self-supervised learning with two augmented "views" of the same data.
@@ -344,7 +359,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 if __name__ == "__main__":
 
     # load the model and set input and ouput dimensions
-    model = EquivariantCrystalGCN(hidden_dim=32, num_rbf=32).to(device)
+    model = EquivariantCrystalGCN(hidden_dim=128, num_rbf=32).to(device)
     # define the optimizer
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
     # read structures from the csv
@@ -355,7 +370,7 @@ if __name__ == "__main__":
     # create a PyTorch-Dataset for the Dataloader
     val_set = StructureDataset(str_train)
     # Create Dataloader; Batch size set to 16
-    dataloader = DataLoader(dataset, batch_size=512, shuffle=True, collate_fn=lambda x: x)
+    dataloader = DataLoader(dataset, batch_size=128, shuffle=True, collate_fn=lambda x: x)
     # Define number of epochs
     epochs = 20
     val_intra, val_inter = [], []
@@ -390,7 +405,7 @@ if __name__ == "__main__":
         val_inter.append(inter)
 
         print(f"Epoch {epoch+1}: Loss={ema_loss:.4f} | Intra={intra:.3f} | Inter={inter:.3f}")
-        torch.save(model.state_dict(), 'gcn_fine.pt')
+        torch.save(model.state_dict(), 'gcn_tau1.pt')
     plt.figure(figsize=(6,4))
     plt.plot(val_intra, label='Same structure (intra)')
     plt.plot(val_inter, label='Different structures (inter)')
