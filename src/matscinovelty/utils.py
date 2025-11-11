@@ -1,22 +1,23 @@
+import json
+import warnings
+
+import numpy as np
 import pandas as pd
-import ast
-import torch 
-import json 
-from pymatgen.core.operations import SymmOp
-from pymatgen.core import Structure, Lattice
-import warnings 
-from torch_geometric.data import Data
-import numpy as np 
-from torch.utils.data import Dataset
+import torch
 from pymatgen.analysis.local_env import MinimumDistanceNN
+from pymatgen.core import Lattice, Structure
+from pymatgen.core.operations import SymmOp
+from torch.utils.data import Dataset
+from torch_geometric.data import Data
 
 
 class StructureDataset(Dataset):
-    '''
+    """
     Dataset creation for the Tensorflow Dataloader
     Input:
     Structures - List of crystal structures; Output of read_structure_from_csv
-    '''
+    """
+
     def __init__(self, structures):
         self.structures = structures
 
@@ -45,13 +46,15 @@ def augment(structure: Structure) -> Structure:
     s = structure.copy()
 
     # random rotation
-    rand_matrix = np.random.normal(size=(3,3))
+    rand_matrix = np.random.normal(size=(3, 3))
     Q, _ = np.linalg.qr(rand_matrix)
     if np.linalg.det(Q) < 0:
-        Q[:,0] = -Q[:,0]
+        Q[:, 0] = -Q[:, 0]
 
     # rotate both lattice and atoms
-    op = SymmOp.from_rotation_and_translation(rotation_matrix=Q, translation_vec=[0,0,0])
+    op = SymmOp.from_rotation_and_translation(
+        rotation_matrix=Q, translation_vec=[0, 0, 0]
+    )
     s.apply_operation(op, fractional=False)  # apply in cartesian space
 
     # random fractional translation
@@ -75,58 +78,48 @@ def read_structure_from_csv(filename: str):
     return structures
 
 
+def structure_to_graph(structure, cutoff=8.0, num_rbf=32):
+    """
+    Encode a pymatgen Structure as a torch_geometric Data graph. Adds node
+    embeddings for atomic number, pairwise edges within `cutoff`, and RBF edge
+    attributes, plus Cartesian positions for equivariant models.
+    """
+    if len(structure) == 0:
+        raise ValueError("Cannot build a graph for an empty structure.")
 
-def structure_to_graph(structure, cutoff=6.0, num_rbf=32):
-    '''
-    Converts an atomic structure into a graph suitable
-    for graph neural networks (GNNs).
-
-    Parameters:
-    -----------
-    structure : pymatgen Structure or similar; Parsed from CIF-file
-        Atomic structure containing sites with element types and coordinates.
-    cutoff : float, optional
-        Maximum distance (in Angstroms) to consider two atoms as neighbors.
-        Defaults to 6.0 Å.
-    num_rbf : int, optional
-        Controls the size of the radial basis function (RBF) encoding.
-        Defaults to 32.
-
-    Returns:
-    --------
-    torch_geometric.data.Data
-        A graph object where nodes represent atoms with atomic number features
-        and edges represent neighboring atom pairs with RBF-expanded distances as attributes.
-    '''
-    N = len(structure)
-
-    # node features: atomic numbers
     z = torch.tensor([site.specie.Z for site in structure], dtype=torch.long)
+    pos = torch.tensor(structure.cart_coords, dtype=torch.float)
 
-    # build neighbor list
-    nns = MinimumDistanceNN(cutoff=cutoff).get_all_nn_info(structure)
-
-    edge_index = []
-    edge_attr = []
-
-    # RBF expansion helper
+    mdnn = MinimumDistanceNN(cutoff=cutoff)
     centers = torch.linspace(0, cutoff, num_rbf)
     gamma = 10.0
 
-    for i, neighs in enumerate(nns):
-        for n in neighs:
-            j = n['site_index'] # index at which the atom lies in the structure
-            d = n['weight']  # distance
+    edge_index, edge_attr = [], []
+
+    for i in range(len(structure)):
+        try:
+            neighs = mdnn.get_nn_info(structure, i)
+        except ValueError:
+            neighs = []
+
+        if not neighs:
+            continue
+
+        for nn in neighs:
+            j = nn["site_index"]
+            d = nn["weight"]
             edge_index.append([i, j])
+            edge_attr.append(torch.exp(-gamma * (d - centers) ** 2))
 
-            # radial basis expansion
-            rbf = torch.exp(-gamma * (d - centers)**2)
-            edge_attr.append(rbf)
+    if edge_index:
+        edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+        edge_attr = torch.stack(edge_attr)
+    else:
+        num_edges = 0
+        edge_index = torch.zeros((2, num_edges), dtype=torch.long)
+        edge_attr = torch.zeros((num_edges, num_rbf), dtype=torch.float)
 
-    edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-    edge_attr = torch.stack(edge_attr)
-
-    return Data(x=z, edge_index=edge_index, edge_attr=edge_attr)
+    return Data(x=z, pos=pos, edge_index=edge_index, edge_attr=edge_attr)
 
 
 def read_csv(filename):
@@ -138,15 +131,16 @@ def read_csv(filename):
     for i, row in df.iterrows():
         try:
             with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                structure = Structure.from_str(row['cif'], fmt='cif')
+                warnings.simplefilter("ignore")
+                structure = Structure.from_str(row["cif"], fmt="cif")
             structures.append(structure)
         except Exception as e:
-            print(f'Error processing row {i}: {e}')
+            print(f"Error processing row {i}: {e}")
 
-    print(f'Parsed {len(structures)} structures from {filename}.')
+    print(f"Parsed {len(structures)} structures from {filename}.")
 
     return structures
+
 
 def load_structures_from_json_column(df, col="structure"):
     structures = []
@@ -168,6 +162,7 @@ def novelty_score(gen_feats, train_feats, threshold=0.05):
     min_dists = D.min(dim=1).values
     return (min_dists > threshold).float().mean().item()
 
+
 def coverage_score(train_feats, gen_feats, threshold=0.05):
     """
     Fraction of training samples that have at least one generated sample within `threshold`.
@@ -175,6 +170,7 @@ def coverage_score(train_feats, gen_feats, threshold=0.05):
     D = torch.cdist(train_feats, gen_feats, p=2)
     min_dists = D.min(dim=1).values
     return (min_dists <= threshold).float().mean().item()
+
 
 def load_wyckoff_structures(df):
     """
@@ -187,7 +183,11 @@ def load_wyckoff_structures(df):
         try:
             # --- Parse lattice ---
             if "lattice" in df.columns:
-                lattice_dict = json.loads(row["lattice"]) if isinstance(row["lattice"], str) else row["lattice"]
+                lattice_dict = (
+                    json.loads(row["lattice"])
+                    if isinstance(row["lattice"], str)
+                    else row["lattice"]
+                )
                 lattice = Lattice.from_parameters(**lattice_dict)
             else:
                 # Fallback: cubic dummy (rarely needed)
@@ -195,15 +195,27 @@ def load_wyckoff_structures(df):
 
             # --- Parse coordinates ---
             if "sites" in df.columns:
-                sites = json.loads(row["sites"]) if isinstance(row["sites"], str) else row["sites"]
+                sites = (
+                    json.loads(row["sites"])
+                    if isinstance(row["sites"], str)
+                    else row["sites"]
+                )
                 coords = [s["abc"] if "abc" in s else s for s in sites]
             elif "sites_enumeration" in df.columns:
-                coords = json.loads(row["sites_enumeration"]) if isinstance(row["sites_enumeration"], str) else row["sites_enumeration"]
+                coords = (
+                    json.loads(row["sites_enumeration"])
+                    if isinstance(row["sites_enumeration"], str)
+                    else row["sites_enumeration"]
+                )
             else:
                 raise ValueError("No site coordinates found.")
 
             # --- Parse elements/species ---
-            species = json.loads(row["species"]) if isinstance(row["species"], str) else row["species"]
+            species = (
+                json.loads(row["species"])
+                if isinstance(row["species"], str)
+                else row["species"]
+            )
             if isinstance(species[0], dict):
                 species = [list(s.keys())[0] for s in species]  # if dict like {'Na':1}
 
@@ -212,7 +224,7 @@ def load_wyckoff_structures(df):
                 lattice=lattice,
                 species=species,
                 coords=coords,
-                coords_are_cartesian=False
+                coords_are_cartesian=False,
             )
             structures.append(struct)
 
@@ -223,7 +235,10 @@ def load_wyckoff_structures(df):
     print(f"✅ Reconstructed {len(structures)} structures from Wyckoff CSV.")
     return structures
 
-def perturb_structures(original_structures, mode="lattice_scale", strength=0.1, rng=None):
+
+def perturb_structures(
+    original_structures, mode="lattice_scale", strength=0.1, rng=None
+):
     """
     Apply perturbations to a list of pymatgen Structures.
 
@@ -253,7 +268,7 @@ def perturb_structures(original_structures, mode="lattice_scale", strength=0.1, 
                 lattice=new_lat,
                 species=[site.species for site in s.sites],
                 coords=[site.frac_coords for site in s.sites],
-                coords_are_cartesian=False
+                coords_are_cartesian=False,
             )
 
         elif mode == "shear":
@@ -265,7 +280,7 @@ def perturb_structures(original_structures, mode="lattice_scale", strength=0.1, 
                 lattice=new_lat,
                 species=[site.species for site in s.sites],
                 coords=[site.frac_coords for site in s.sites],
-                coords_are_cartesian=False
+                coords_are_cartesian=False,
             )
 
         elif mode == "clash":
@@ -287,7 +302,7 @@ def perturb_structures(original_structures, mode="lattice_scale", strength=0.1, 
                     lattice=s.lattice,
                     species=[site.species for site in s.sites],
                     coords=new_coords,
-                    coords_are_cartesian=False
+                    coords_are_cartesian=False,
                 )
 
         elif mode == "vacancies":
@@ -305,7 +320,7 @@ def perturb_structures(original_structures, mode="lattice_scale", strength=0.1, 
                 lattice=s.lattice,
                 species=new_species,
                 coords=new_coords,
-                coords_are_cartesian=False
+                coords_are_cartesian=False,
             )
 
         else:
@@ -317,10 +332,7 @@ def perturb_structures(original_structures, mode="lattice_scale", strength=0.1, 
 
 
 def perturb_structures_corrupt(
-    original_structures,
-    vacancy_prob=0.1,
-    swap_prob=0.1,
-    rng=None
+    original_structures, vacancy_prob=0.1, swap_prob=0.1, rng=None
 ):
     """
     Perturb structures by introducing vacancies and random atom swaps.
@@ -331,9 +343,7 @@ def perturb_structures_corrupt(
         rng = np.random.default_rng()
 
     perturbed_structures = []
-    all_species = list({
-        str(sp) for s in original_structures for sp in s.species
-    })
+    all_species = list({str(sp) for s in original_structures for sp in s.species})
 
     for original in original_structures:
         new_coords = []
@@ -366,7 +376,7 @@ def perturb_structures_corrupt(
             lattice=original.lattice,
             species=new_species,
             coords=new_coords,
-            coords_are_cartesian=False
+            coords_are_cartesian=False,
         )
         perturbed_structures.append(perturbed)
 
@@ -374,10 +384,7 @@ def perturb_structures_corrupt(
 
 
 def perturb_structures_gaussian(
-    original_structures,
-    sigma=0.05,
-    teleport_prob=0.0,
-    rng=None
+    original_structures, sigma=0.05, teleport_prob=0.0, rng=None
 ):
     """
     Intentionally unphysical perturbations in fractional space using Gaussian noise,
@@ -418,9 +425,8 @@ def perturb_structures_gaussian(
             lattice=original.lattice,
             species=[s.species for s in original.sites],
             coords=new_coords,
-            coords_are_cartesian=False
+            coords_are_cartesian=False,
         )
         perturbed_structures.append(perturbed)
 
     return perturbed_structures
-
