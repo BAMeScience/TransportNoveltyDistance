@@ -79,6 +79,7 @@ class EquivariantCrystalGCN(nn.Module):
         self, hidden_dim: int = 128, num_rbf: int = 32, n_layers: int = 3
     ) -> None:
         super().__init__()
+        self.num_rbf = num_rbf
         self.emb = nn.Embedding(100, hidden_dim)
         self.layers = nn.ModuleList([
             EGNNLayer(hidden_dim, hidden_dim, edge_features=num_rbf)
@@ -104,7 +105,7 @@ class EquivariantCrystalGCN(nn.Module):
         device = next(self.parameters()).device
         self.eval()
         with torch.no_grad():
-            graphs = [structure_to_graph(s) for s in structures]
+            graphs = [structure_to_graph(s, num_rbf=self.num_rbf) for s in structures]
             batch = Batch.from_data_list(graphs).to(device)
             z = F.normalize(self(batch), dim=1)
 
@@ -163,7 +164,11 @@ class CrystalGCN(nn.Module):
 
 
 def validate(
-    model: nn.Module, dataset: StructureDataset, device=None, batch_size: int = 128
+    model: nn.Module,
+    dataset: StructureDataset,
+    device=None,
+    batch_size: int = 128,
+    num_rbf: int = 32,
 ):
     """Evaluate intra-structure consistency and inter-structure separation."""
     if device is None:
@@ -179,8 +184,12 @@ def validate(
 
     with torch.no_grad():
         for structures in dataloader:
-            graphs1 = [structure_to_graph(augment(s)) for s in structures]
-            graphs2 = [structure_to_graph(augment(s)) for s in structures]
+            graphs1 = [
+                structure_to_graph(augment(s), num_rbf=num_rbf) for s in structures
+            ]
+            graphs2 = [
+                structure_to_graph(augment(s), num_rbf=num_rbf) for s in structures
+            ]
             batch1 = Batch.from_data_list(graphs1).to(device)
             batch2 = Batch.from_data_list(graphs2).to(device)
 
@@ -257,8 +266,12 @@ def train_contrastive_model(
     for epoch in range(epochs):
         ema_loss = 0.0
         for step, structures in enumerate(dataloader):
-            graphs1 = [structure_to_graph(augment(s)) for s in structures]
-            graphs2 = [structure_to_graph(augment(s)) for s in structures]
+            graphs1 = [
+                structure_to_graph(augment(s), num_rbf=num_rbf) for s in structures
+            ]
+            graphs2 = [
+                structure_to_graph(augment(s), num_rbf=num_rbf) for s in structures
+            ]
 
             batch1 = Batch.from_data_list(graphs1).to(torch_device)
             batch2 = Batch.from_data_list(graphs2).to(torch_device)
@@ -274,7 +287,11 @@ def train_contrastive_model(
             ema_loss = (loss.item() + ema_loss * step) / (step + 1)
 
         intra, inter = validate(
-            model, val_dataset, device=torch_device, batch_size=batch_size
+            model,
+            val_dataset,
+            device=torch_device,
+            batch_size=batch_size,
+            num_rbf=num_rbf,
         )
         val_intra.append(intra)
         val_inter.append(inter)

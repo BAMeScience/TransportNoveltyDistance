@@ -85,3 +85,4 @@ Run them from the project root (e.g., `python experiments/model_eval.py`). Each 
 - Format/lint locally with `pip install -e .[dev] && ruff check .`.
 - Keep large pretrained checkpoints (e.g., `gcn_fine.pt`) out of version control unless needed.
 - When extending the package, prefer adding new modules under `src/matscinovelty/` and re-export relevant APIs in `src/matscinovelty/__init__.py`.
+- To smoke-test the training loop without heavy datasets, activate your virtualenv and run `pytest tests/test_smoke_train.py`.
