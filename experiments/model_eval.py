@@ -28,28 +28,35 @@ print("Loading structures...")
 str_train = read_structure_from_csv(DATA_MP20 / "train.csv")
 str_val = read_structure_from_csv(DATA_MP20 / "val.csv")
 
+def load_generated_model(path: str, canonicalize: bool = True):
+    """Load a list of pymatgen Structures from a pickle file, optionally canonicalizing each."""
+    with open(path, "rb") as f:
+        data = pickle.load(f)
 
-def load_generated_model(path):
-    df = pd.read_csv(path)
-    return load_structures_from_json_column(df)
+    if canonicalize:
+        data = [canonicalize_structure(s) for s in data]
+
+    print(f"Loaded {len(data)} structures from {path}.")
+    return data
+
 
 
 # all generative models
-struc_mattergen = load_generated_model(DATA_MODELS / "mattergen.csv")
-struc_diffcsp = load_generated_model(DATA_MODELS / "diffcsp.csv")
-struc_diffcspplus = load_generated_model(DATA_MODELS / "diffcsp++.csv")
-struc_crystalformer = load_generated_model(DATA_MODELS / "crystalformer.csv")
-struc_symmcd = load_generated_model(DATA_MODELS / "symmcd.csv")
-struc_wyckoffdiffcspplus = load_generated_model(DATA_MODELS / "wyckoff_diffcsp++.csv")
+struc_mattergen      = load_generated_model("data_new/mattergen.pkl")
+struc_diffcsp        = load_generated_model("data_new/diffcsp.pkl")
+struc_diffcspplus    = load_generated_model("data_new/diffcsppp.pkl")
+struc_cdvae  = load_generated_model("data_new/cdvae.pkl")
+struc_adit        = load_generated_model("data_new/adit.pkl")
+struc_chemeleon = load_generated_model("data_new/chemeleon.pkl")
 
 structure_list = [
     str_val,
     struc_mattergen,
     struc_diffcsp,
     struc_diffcspplus,
-    struc_crystalformer,
-    struc_symmcd,
-    struc_wyckoffdiffcspplus,
+    struc_cdvae,
+    struc_adit,
+    struc_chemeleon
 ]
 
 model_names = [
@@ -57,9 +64,10 @@ model_names = [
     "MatterGen",
     "DiffCSP",
     "DiffCSP++",
-    "CFormer",
-    "SymmCD",
-    "WyckoffDiffCSP++",
+    "CdVAE",
+    "Adit", 
+    "Chemeleon"
+
 ]
 
 # ===========================================================
