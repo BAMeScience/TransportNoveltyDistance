@@ -2,6 +2,14 @@
 High-level package exports for MatSciNovelty.
 """
 
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message="`torch_geometric.distributed` has been deprecated",
+    category=DeprecationWarning,
+)
+
 from .gcn import (
     CrystalGCN,
     EGNNLayer,
