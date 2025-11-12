@@ -136,7 +136,8 @@ class EquivariantCrystalGCN(nn.Module):
                 )
                 lat_feats.append(lat)
 
-            lat_feats = torch.tensor(lat_feats, device=device)
+            lat_feats = np.stack(lat_feats).astype(np.float32)
+            lat_feats = torch.from_numpy(lat_feats).to(device)
             z = torch.cat([z, lat_feats], dim=1)
 
         return z.cpu()

@@ -1,4 +1,6 @@
+import argparse
 import pickle
+from collections import OrderedDict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -22,6 +24,60 @@ except ModuleNotFoundError as exc:  # pragma: no cover - runtime guard
         "Install it (or provide an equivalent shim on PYTHONPATH) before running this script."
     ) from exc
 
+
+def _extract_state_dict(raw_checkpoint: dict | OrderedDict) -> OrderedDict:
+    """Return the model state dict no matter how the checkpoint was stored."""
+    if isinstance(raw_checkpoint, dict):
+        for key in ("state_dict", "model_state_dict", "model"):
+            if key in raw_checkpoint and isinstance(raw_checkpoint[key], OrderedDict):
+                return raw_checkpoint[key]
+    if isinstance(raw_checkpoint, OrderedDict):
+        return raw_checkpoint
+    if isinstance(raw_checkpoint, dict):
+        return OrderedDict(raw_checkpoint)
+    raise TypeError("Unrecognized checkpoint format when extracting state dict.")
+
+
+def _strip_prefix(state_dict: OrderedDict, prefix: str) -> OrderedDict:
+    if not state_dict:
+        return state_dict
+    if all(key.startswith(prefix) for key in state_dict.keys()):
+        return OrderedDict((k[len(prefix) :], v) for k, v in state_dict.items())
+    return state_dict
+
+
+def _prepare_state_dict(state_dict: OrderedDict) -> OrderedDict:
+    for prefix in ("module.", "model."):
+        state_dict = _strip_prefix(state_dict, prefix)
+    return state_dict
+
+
+def _infer_gcn_config(state_dict: OrderedDict) -> tuple[int, int, int]:
+    """Infer hidden_dim, num_rbf, and n_layers from a checkpoint."""
+    try:
+        hidden_dim = state_dict["emb.weight"].shape[1]
+    except KeyError as exc:
+        raise KeyError(
+            "Checkpoint missing 'emb.weight'; cannot infer hidden_dim."
+        ) from exc
+
+    edge_key = "layers.0.edge_mlp.0.weight"
+    if edge_key not in state_dict:
+        raise KeyError(f"Checkpoint missing '{edge_key}'; cannot infer num_rbf.")
+    num_rbf = state_dict[edge_key].shape[1] - (2 * hidden_dim + 1)
+    if num_rbf < 0:
+        raise ValueError("Inferred num_rbf was negative; checkpoint/config mismatch.")
+
+    layer_ids = set()
+    for key in state_dict.keys():
+        if key.startswith("layers."):
+            parts = key.split(".")
+            if len(parts) > 1 and parts[1].isdigit():
+                layer_ids.add(int(parts[1]))
+    n_layers = max(layer_ids) + 1 if layer_ids else 1
+    return hidden_dim, num_rbf, n_layers
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_MP20 = PROJECT_ROOT / "data" / "mp_20"
 DATA_MODELS = PROJECT_ROOT / "data_models"
@@ -29,6 +85,20 @@ DATA_XTALMET = PROJECT_ROOT / "data" / "xtalmet_models"
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 IMGS_DIR = PROJECT_ROOT / "imgs"
 IMGS_DIR.mkdir(exist_ok=True)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Evaluate generative models with OT novelty."
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=CHECKPOINTS_DIR / "gcn_fine.pt",
+        help="Path to the encoder checkpoint (default: checkpoints/gcn_fine.pt).",
+    )
+    return parser.parse_args()
+
 
 # ===========================================================
 # 1️⃣ Load Data
@@ -87,11 +157,25 @@ model_names = [
 # ===========================================================
 # 2️⃣ Initialize Scorer
 # ===========================================================
+args = parse_args()
+checkpoint_path = args.checkpoint
+
+if not checkpoint_path.exists():
+    raise SystemExit(f"Checkpoint not found at {checkpoint_path}.")
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Loading pretrained GCN model...")
-model = EquivariantCrystalGCN(hidden_dim=128).to(device)
-checkpoint_path = CHECKPOINTS_DIR / "gcn_fine.pt"
-model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+
+raw_checkpoint = torch.load(checkpoint_path, map_location=device)
+state_dict = _prepare_state_dict(_extract_state_dict(raw_checkpoint))
+hidden_dim, num_rbf, n_layers = _infer_gcn_config(state_dict)
+print(
+    f"Checkpoint config detected -> hidden_dim={hidden_dim}, num_rbf={num_rbf}, n_layers={n_layers}"
+)
+model = EquivariantCrystalGCN(
+    hidden_dim=hidden_dim, num_rbf=num_rbf, n_layers=n_layers
+).to(device)
+model.load_state_dict(state_dict)
 print("Loaded weights from gcn_fine.pt ✅")
 
 
