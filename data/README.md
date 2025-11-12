@@ -26,3 +26,13 @@ python scripts/download_xtalmet_models.py
 
 By default the files land in `data/xtalmet_models/`. Use `--force` to overwrite or `--output-dir` to select another folder before running the evaluation script.
 This helper depends on `huggingface_hub`, so run `pip install huggingface_hub` if the module is missing.
+
+## WBM dataset
+
+For the WBM novelty experiment (`experiments/wbm_exp.py`), mirror the public WBM summary and structure data via `matbench_discovery` (install with `pip install matbench-discovery`):
+
+```bash
+python scripts/download_wbm_data.py
+```
+
+The script creates `data/wbm/` containing the summary CSV, initial structure JSONL, ASE atoms archive, and per-step optimized structure dumps. Keep this folder out of git; the experiment script reads from it automatically.

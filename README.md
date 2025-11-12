@@ -54,6 +54,16 @@ python scripts/download_xtalmet_models.py
 This stores the files under `data/xtalmet_models/`. Use `--force` to re-download or `--output-dir` if you prefer a different cache directory.
 The helper requires `huggingface_hub`; install it via `pip install huggingface_hub` if it's not already available in your environment.
 
+### Cache the WBM dataset for `experiments/wbm_exp.py`
+
+With `matbench-discovery` (install via `pip install matbench-discovery`) in your environment, mirror the WBM summary and structure files locally:
+
+```bash
+python scripts/download_wbm_data.py
+```
+
+The script writes the summary CSV, initial structure JSONL, ASE atoms archive, and per-step structure dumps into `data/wbm/`, which is where `experiments/wbm_exp.py` expects to find them.
+
 ## Package layout
 
 - `matscinovelty.gcn`: Equivariant GNN encoder (`EquivariantCrystalGCN`), simpler CGConv model (`CrystalGCN`), InfoNCE loss, validation utilities, and a helper `train_contrastive_model`.

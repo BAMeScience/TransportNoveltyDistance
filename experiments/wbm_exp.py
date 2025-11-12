@@ -3,7 +3,6 @@ import random
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import torch
 from pymatgen.core import Structure
@@ -16,7 +15,7 @@ from matscinovelty import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_MP20 = PROJECT_ROOT / "data" / "mp_20"
-WBM_DIR = PROJECT_ROOT / "wbm_data"
+WBM_DIR = PROJECT_ROOT / "data" / "wbm"
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 IMGS_DIR = PROJECT_ROOT / "imgs"
 IMGS_DIR.mkdir(exist_ok=True)
@@ -28,19 +27,24 @@ print("Loading WBM data...")
 str_train = read_structure_from_csv(DATA_MP20 / "train.csv")
 
 # --- Load stable WBM structures ---
-summary = pd.read_csv(WBM_DIR / "wbm-summary.txt", sep="\t", header=None)
-stable = summary[summary[5] < 0]
+summary = pd.read_csv(WBM_DIR / "wbm-summary.csv")
+stable = summary[summary["e_form_per_atom_wbm"] < 0]
 
 
 def load_structures_for_step(step):
     path = WBM_DIR / f"wbm-structures-step-{step}.json"
     with open(path) as fh:
         data = json.load(fh)
-    mask = np.array(
-        [stable[7].iloc[i].split("_")[1] == str(step) for i in range(len(stable))]
-    )
-    subset = stable.iloc[np.where(mask)[0]]
-    structs = [Structure.from_dict(data[e]["opt"]) for e in subset[7].values]
+    subset = stable[stable["wyckoff_spglib"].str.endswith(f"_{step}")]
+
+    structs = []
+    for mid in subset["material_id"]:
+        entry = data[str(mid)]
+        struct_dict = (
+            entry["opt"] if isinstance(entry, dict) and "opt" in entry else entry
+        )
+        structs.append(Structure.from_dict(struct_dict))
+
     print(f"Loaded {len(structs)} structures for WBM step {step}")
     return structs
 
