@@ -20,7 +20,7 @@ The package depends on PyTorch, PyTorch Geometric, Pymatgen, POT (`ot`), pandas,
 Most scripts expect:
 
 - `data/mp_20/train.csv` and `data/mp_20/val.csv`: CSV files with a `cif` column containing serialized crystal structures (the MP20 dataset in our experiments).
-- Optional WBM data under `wbm_data/`.
+- Optional WBM data cached under `data/wbm/` (see the WBM section below).
 - Generative model outputs stored in `data_models/*.csv` using the Wyckoff-format columns consumed by `load_structures_from_json_column`.
 
 Make sure these files are present in the working directory before running the example scripts.
