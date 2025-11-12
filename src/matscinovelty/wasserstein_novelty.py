@@ -42,6 +42,7 @@ class OTNoveltyScorer:
         memorization_weight: Optional[float] = None,
         device: str | torch.device | None = None,
         pretrained_weights: Optional[str] = None,
+        ot_num_itermax: int = 1_000_000,
     ) -> None:
         """
         Parameters
@@ -69,6 +70,9 @@ class OTNoveltyScorer:
         pretrained_weights
             Path to a checkpoint, loaded only when no ``gnn_model`` or
             ``featurizer`` is provided.
+        ot_num_itermax
+            Maximum iterations for POT's network simplex solver (``ot.emd``).
+            Raise this if you hit ``numItermax`` warnings on large batches.
         """
         self.device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -93,25 +97,11 @@ class OTNoveltyScorer:
         self.train_feats = self.featurizer(self.train_structs).to(self.device)
         print(f"Training embeddings shape: {self.train_feats.shape}")
 
-        if tau is None:
-            if tau_quantile is not None:
-                self.tau = self._estimate_tau_ot(
-                    self.train_feats, quantile=tau_quantile
-                )
-                self.m_weight = (
-                    memorization_weight if memorization_weight is not None else 1.0
-                )
-            else:
-                tau, m_scale = self.calibrate_principled_tau()
-                self.tau = tau
-                self.m_weight = (
-                    memorization_weight if memorization_weight is not None else m_scale
-                )
-        else:
-            self.tau = tau
-            self.m_weight = (
-                memorization_weight if memorization_weight is not None else 1.0
-            )
+        self.ot_num_itermax = ot_num_itermax
+
+        self.tau, self.m_weight = self._resolve_tau_and_weight(
+            tau=tau, tau_quantile=tau_quantile, memorization_weight=memorization_weight
+        )
 
         print(
             f"Using τ = {self.tau:.4f} with memorization weight = {self.m_weight:.4f}"
@@ -150,14 +140,48 @@ class OTNoveltyScorer:
         C = torch.cdist(f1, f2, p=2)
         a = torch.full((f1.size(0),), 1.0 / f1.size(0))
         b = torch.full((f2.size(0),), 1.0 / f2.size(0))
-        P = torch.from_numpy(ot.emd(a.numpy(), b.numpy(), C.cpu().numpy())).to(C.device)
+        P = torch.from_numpy(
+            ot.emd(
+                a.numpy(),
+                b.numpy(),
+                C.cpu().numpy(),
+                numItermax=self.ot_num_itermax,
+            )
+        ).to(C.device)
         d_flat, w_flat = C.flatten(), P.flatten() / P.sum()
         sorted_idx = torch.argsort(d_flat)
         cumw = torch.cumsum(w_flat[sorted_idx], dim=0)
         cutoff = torch.searchsorted(cumw, quantile)
         return d_flat[sorted_idx[min(cutoff, len(cumw) - 1)]].item()
 
-    def calibrate_principled_tau(self) -> tuple[float, float]:
+    def _resolve_tau_and_weight(
+        self,
+        *,
+        tau: float | None,
+        tau_quantile: float | None,
+        memorization_weight: float | None,
+    ) -> tuple[float, float]:
+        """Determine τ and the memorization weight given user inputs."""
+
+        if tau is not None:
+            if memorization_weight is not None:
+                return tau, memorization_weight
+            _, m_scale = self.calibrate_principled_tau(fixed_tau=tau)
+            return tau, m_scale
+
+        if tau_quantile is not None:
+            tau_auto = self._estimate_tau_ot(self.train_feats, quantile=tau_quantile)
+            if memorization_weight is not None:
+                return tau_auto, memorization_weight
+            _, m_scale = self.calibrate_principled_tau(fixed_tau=tau_auto)
+            return tau_auto, m_scale
+
+        tau_auto, auto_m_weight = self.calibrate_principled_tau(fixed_tau=None)
+        return tau_auto, memorization_weight or auto_m_weight
+
+    def calibrate_principled_tau(
+        self, fixed_tau: float | None = None
+    ) -> tuple[float, float]:
         """
         Separate augmented copies from real samples via a brute-force threshold search.
 
@@ -184,26 +208,29 @@ class OTNoveltyScorer:
         aug_feats = self.featurizer(augmented_structs).to(self.device)
         d_aug = torch.cdist(aug_feats, self.train_feats).min(dim=1).values
 
-        all_distances = torch.cat([d_aug, d_loocv])
-        labels = torch.cat([torch.ones_like(d_aug), torch.zeros_like(d_loocv)])
+        if fixed_tau is None:
+            all_distances = torch.cat([d_aug, d_loocv])
+            labels = torch.cat([torch.ones_like(d_aug), torch.zeros_like(d_loocv)])
 
-        min_error = float("inf")
-        optimal_tau = float((d_aug.mean() + d_loocv.mean()) / 2.0)
+            min_error = float("inf")
+            optimal_tau = float((d_aug.mean() + d_loocv.mean()) / 2.0)
 
-        for tau_candidate in torch.unique(all_distances):
-            predictions = (all_distances < tau_candidate).float()
-            error = torch.abs(predictions - labels).sum()
-            if error < min_error:
-                min_error = error
-                optimal_tau = tau_candidate.item()
+            for tau_candidate in torch.unique(all_distances):
+                predictions = (all_distances < tau_candidate).float()
+                error = torch.abs(predictions - labels).sum()
+                if error < min_error:
+                    min_error = error
+                    optimal_tau = tau_candidate.item()
+        else:
+            optimal_tau = fixed_tau
 
         numerator = d_loocv.mean() + 2 * d_loocv.std() - optimal_tau
         denominator = max(
             optimal_tau - d_aug.mean(), torch.tensor(1e-6, device=self.device)
         )
-        m_scale = (numerator / denominator).item()
+        m_weight = (numerator / denominator).item()
 
-        return optimal_tau, m_scale
+        return optimal_tau, m_weight
 
     def _get_ot_plan(self, X: torch.Tensor, Y: torch.Tensor):
         """
@@ -223,7 +250,14 @@ class OTNoveltyScorer:
         a = torch.full((X.size(0),), 1.0 / X.size(0))
         b = torch.full((Y.size(0),), 1.0 / Y.size(0))
         C = torch.cdist(X, Y, p=2)
-        P = torch.from_numpy(ot.emd(a.numpy(), b.numpy(), C.cpu().numpy())).to(C.device)
+        P = torch.from_numpy(
+            ot.emd(
+                a.numpy(),
+                b.numpy(),
+                C.cpu().numpy(),
+                numItermax=self.ot_num_itermax,
+            )
+        ).to(C.device)
         return P, C
 
     def compute_novelty(self, gen_structures: Sequence):

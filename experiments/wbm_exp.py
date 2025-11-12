@@ -45,7 +45,18 @@ str_train = read_structure_from_csv(DATA_MP20 / "train.csv")
 
 # --- Load stable WBM structures ---
 summary = pd.read_csv(WBM_DIR / "wbm-summary.csv")
-stable = summary[summary["e_form_per_atom_wbm"] < 0].copy()
+STABILITY_COLUMN = "e_form_per_atom_mp2020_corrected"
+# MP2020-corrected energies incorporate the Materials Project correction scheme
+# (anion redox, GGA/GGA+U alignment, etc.) to align DFT formation energies with
+# experimental thermochemistry. Using the corrected column ensures stability
+# decisions match the canonical MP phase diagram rather than raw (uncorrected)
+# energies, which can be biased for transition-metal oxides and similar chemistries.
+if STABILITY_COLUMN not in summary.columns:
+    raise KeyError(
+        f"Column '{STABILITY_COLUMN}' missing from WBM summary. "
+        "Please rerun scripts/download_wbm_data.py to refresh the dataset."
+    )
+stable = summary[summary[STABILITY_COLUMN] < 0].copy()
 stable["step"] = (
     pd.to_numeric(stable["material_id"].str.split("-").str[1], errors="coerce")
     .fillna(0)
@@ -98,7 +109,7 @@ scorer = OTNoveltyScorer(
     gnn_model=model,
     tau=None,  # auto-estimate τ
     tau_quantile=0.05,
-    memorization_weight=10.0,
+    memorization_weight=None,
     device=device,
 )
 print(f"Estimated τ = {scorer.tau:.4f}")
