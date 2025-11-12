@@ -35,4 +35,4 @@ For the WBM novelty experiment (`experiments/wbm_exp.py`), mirror the public WBM
 python scripts/download_wbm_data.py
 ```
 
-The script creates `data/wbm/` containing the summary CSV, initial structure JSONL, ASE atoms archive, and per-step optimized structure dumps. Keep this folder out of git; the experiment script reads from it automatically.
+The script creates `data/wbm/` containing the summary CSV, initial atoms archive, and (unless you pass `--skip-step-json`) per-step relaxed structure dumps used by `experiments/wbm_exp.py`. The relaxed-structure export iterates over the full 250k-structure archive and can take a while; use `--step-limit N` for smaller debugging extracts. Keep this folder out of git; the experiment script reads from it automatically.

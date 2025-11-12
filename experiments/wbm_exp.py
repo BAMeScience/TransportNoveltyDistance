@@ -1,3 +1,4 @@
+import argparse
 import json
 import random
 from pathlib import Path
@@ -20,6 +21,21 @@ CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 IMGS_DIR = PROJECT_ROOT / "imgs"
 IMGS_DIR.mkdir(exist_ok=True)
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Evaluate WBM progression using the novelty metric."
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=CHECKPOINTS_DIR / "gcn_fine.pt",
+        help="Path to the encoder checkpoint (default: checkpoints/gcn_fine.pt).",
+    )
+    return parser.parse_args()
+
+
+args = parse_args()
+
 # ===========================================================
 # 1️⃣ Load Data
 # ===========================================================
@@ -28,21 +44,31 @@ str_train = read_structure_from_csv(DATA_MP20 / "train.csv")
 
 # --- Load stable WBM structures ---
 summary = pd.read_csv(WBM_DIR / "wbm-summary.csv")
-stable = summary[summary["e_form_per_atom_wbm"] < 0]
+stable = summary[summary["e_form_per_atom_wbm"] < 0].copy()
+stable["step"] = (
+    pd.to_numeric(stable["material_id"].str.split("-").str[1], errors="coerce")
+    .fillna(0)
+    .astype(int)
+)
 
 
 def load_structures_for_step(step):
     path = WBM_DIR / f"wbm-structures-step-{step}.json"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found. Run `python scripts/download_wbm_data.py` to "
+            "cache the per-step relaxed structures."
+        )
     with open(path) as fh:
         data = json.load(fh)
-    subset = stable[stable["wyckoff_spglib"].str.endswith(f"_{step}")]
+    subset = stable[stable["step"] == step]
 
     structs = []
     for mid in subset["material_id"]:
-        entry = data[str(mid)]
-        struct_dict = (
-            entry["opt"] if isinstance(entry, dict) and "opt" in entry else entry
-        )
+        entry = data.get(str(mid))
+        if entry is None:
+            continue
+        struct_dict = entry["opt"] if isinstance(entry, dict) and "opt" in entry else entry
         structs.append(Structure.from_dict(struct_dict))
 
     print(f"Loaded {len(structs)} structures for WBM step {step}")
@@ -56,10 +82,13 @@ wbm_steps = [load_structures_for_step(i) for i in range(1, 6)]
 # ===========================================================
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Loading pretrained GCN model...")
+checkpoint_path = args.checkpoint
+if not checkpoint_path.exists():
+    raise SystemExit(f"Checkpoint not found at {checkpoint_path}.")
+
 model = EquivariantCrystalGCN(hidden_dim=128).to(device)
-checkpoint_path = CHECKPOINTS_DIR / "gcn_fine.pt"
 model.load_state_dict(torch.load(checkpoint_path, map_location=device))
-print("Loaded weights from gcn_fine.pt ✅")
+print(f"Loaded weights from {checkpoint_path.name} ✅")
 
 scorer = OTNoveltyScorer(
     train_structures=str_train,

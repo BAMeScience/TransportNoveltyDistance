@@ -62,7 +62,7 @@ With `matbench-discovery` (install via `pip install matbench-discovery`) in your
 python scripts/download_wbm_data.py
 ```
 
-The script writes the summary CSV, initial structure JSONL, ASE atoms archive, and per-step structure dumps into `data/wbm/`, which is where `experiments/wbm_exp.py` expects to find them.
+The script writes the summary CSV, initial atoms archive, and (by default) the relaxed structure dumps for steps 1–5 into `data/wbm/`, which is where `experiments/wbm_exp.py` looks for them. Generating the per-step JSON files requires iterating over ~250k structures and can take a while; pass `--skip-step-json` to skip that step or `--step-limit 1000` to export a smaller slice for quick tests.
 
 ## Package layout
 
