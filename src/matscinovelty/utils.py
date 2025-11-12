@@ -3,13 +3,13 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import spglib
 import torch
 from pymatgen.analysis.local_env import MinimumDistanceNN
 from pymatgen.core import Lattice, Structure
 from pymatgen.core.operations import SymmOp
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
-import spglib
 
 
 class StructureDataset(Dataset):
@@ -29,8 +29,9 @@ class StructureDataset(Dataset):
         return self.structures[idx]
 
 
-
-def canonicalize_structure(struct: Structure, symprec=1e-3, angle_tolerance=5.0) -> Structure:
+def canonicalize_structure(
+    struct: Structure, symprec=1e-3, angle_tolerance=5.0
+) -> Structure:
     """
     Returns a symmetry-reduced, Niggli-reduced, sorted structure.
     Falls back gracefully if spglib reduction fails.
@@ -41,13 +42,15 @@ def canonicalize_structure(struct: Structure, symprec=1e-3, angle_tolerance=5.0)
     numbers = [site.specie.number for site in struct.sites]
     prim = spglib.find_primitive((lattice, positions, numbers), symprec=symprec)
     if prim is not None:
-        struct = Structure(prim[0], [s.specie for s in struct.sites[:len(prim[2])]], prim[1])
-
+        struct = Structure(
+            prim[0], [s.specie for s in struct.sites[: len(prim[2])]], prim[1]
+        )
 
     # Step 2: Niggli reduction and sorting
     struct = struct.get_reduced_structure(reduction_algo="niggli")
     struct = struct.get_sorted_structure()
     return struct
+
 
 def augment(structure: Structure) -> Structure:
     """

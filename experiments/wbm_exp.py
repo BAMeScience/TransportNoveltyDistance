@@ -21,6 +21,7 @@ CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 IMGS_DIR = PROJECT_ROOT / "imgs"
 IMGS_DIR.mkdir(exist_ok=True)
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Evaluate WBM progression using the novelty metric."
@@ -68,7 +69,9 @@ def load_structures_for_step(step):
         entry = data.get(str(mid))
         if entry is None:
             continue
-        struct_dict = entry["opt"] if isinstance(entry, dict) and "opt" in entry else entry
+        struct_dict = (
+            entry["opt"] if isinstance(entry, dict) and "opt" in entry else entry
+        )
         structs.append(Structure.from_dict(struct_dict))
 
     print(f"Loaded {len(structs)} structures for WBM step {step}")
