@@ -47,6 +47,23 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--epochs", type=int, default=10, help="Training epochs.")
     parser.add_argument("--batch-size", type=int, default=128, help="Batch size.")
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=4,
+        help="Number of DataLoader workers.",
+    )
+    parser.add_argument(
+        "--pin-memory",
+        action="store_true",
+        help="Enable pinned memory for faster host-to-device transfers.",
+    )
+    parser.add_argument(
+        "--prefetch-factor",
+        type=int,
+        default=None,
+        help="Prefetch batches per worker (only when num-workers > 0).",
+    )
     parser.add_argument("--lr", type=float, default=1e-3, help="Adam learning rate.")
     parser.add_argument("--tau", type=float, default=0.1, help="InfoNCE temperature.")
     parser.add_argument(
@@ -131,11 +148,14 @@ def main() -> None:
         hidden_dim=args.hidden_dim,
         num_rbf=args.num_rbf,
         n_layers=args.n_layers,
+        num_workers=args.num_workers,
         device=args.device,
         checkpoint_path=str(args.checkpoint_path) if args.checkpoint_path else None,
         plot_path=str(args.plot_path) if args.plot_path else None,
         accelerator=accelerator,
         model_builder=model_builder,
+        pin_memory=args.pin_memory,
+        prefetch_factor=args.prefetch_factor,
     )
     if _is_main():
         print(f"✅ Training finished. Checkpoint saved to {args.checkpoint_path}.")

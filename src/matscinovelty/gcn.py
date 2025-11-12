@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torch_geometric.data import Batch
 from torch_geometric.nn import CGConv, global_mean_pool
 from torch_geometric.nn.models import SchNet as PyGSchNet
@@ -21,7 +21,6 @@ warnings.filterwarnings(
 )
 
 from .utils import (  # noqa: E402
-    StructureDataset,
     augment,
     read_structure_from_csv,
     structure_to_graph,
@@ -223,12 +222,73 @@ class SchNetEncoder(nn.Module):
         return embeddings.detach().cpu()
 
 
+class GraphContrastiveDataset(Dataset):
+    """
+    Dataset that yields two augmented PyG graphs per structure, enabling the
+    DataLoader workers to perform heavy featurization work in parallel.
+    """
+
+    def __init__(self, structures: Sequence, num_rbf: int = 32) -> None:
+        self.structures = list(structures)
+        self.num_rbf = num_rbf
+
+    def __len__(self) -> int:
+        return len(self.structures)
+
+    def __getitem__(self, idx: int):
+        structure = self.structures[idx]
+        g1 = structure_to_graph(augment(structure), num_rbf=self.num_rbf)
+        g2 = structure_to_graph(augment(structure), num_rbf=self.num_rbf)
+        return g1, g2
+
+
+def graph_pair_collate(batch):
+    graphs1, graphs2 = zip(*batch)
+    batch1 = Batch.from_data_list(graphs1)
+    batch2 = Batch.from_data_list(graphs2)
+    return batch1, batch2
+
+
+def make_contrastive_dataloader(
+    structures: Sequence,
+    *,
+    batch_size: int,
+    num_rbf: int,
+    shuffle: bool,
+    num_workers: int,
+    pin_memory: bool,
+    prefetch_factor: int | None,
+    persistent_workers: bool | None,
+):
+    dataset = GraphContrastiveDataset(structures, num_rbf=num_rbf)
+    if num_workers == 0:
+        effective_prefetch = None
+        effective_persistent = (
+            False if persistent_workers is None else persistent_workers
+        )
+    else:
+        effective_prefetch = prefetch_factor
+        effective_persistent = (
+            persistent_workers if persistent_workers is not None else True
+        )
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        collate_fn=graph_pair_collate,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        prefetch_factor=effective_prefetch,
+        persistent_workers=effective_persistent,
+    )
+
+
 def validate(
     model: nn.Module,
-    dataset: StructureDataset,
+    dataloader: DataLoader,
     device=None,
-    batch_size: int = 128,
-    num_rbf: int = 32,
+    pin_memory: bool = False,
 ):
     """Evaluate intra-structure consistency and inter-structure separation."""
     if device is None:
@@ -238,20 +298,11 @@ def validate(
 
     model.eval()
     intra_sims, inter_sims = [], []
-    dataloader = DataLoader(
-        dataset, batch_size=batch_size, shuffle=True, collate_fn=lambda x: x
-    )
 
     with torch.no_grad():
-        for structures in dataloader:
-            graphs1 = [
-                structure_to_graph(augment(s), num_rbf=num_rbf) for s in structures
-            ]
-            graphs2 = [
-                structure_to_graph(augment(s), num_rbf=num_rbf) for s in structures
-            ]
-            batch1 = Batch.from_data_list(graphs1).to(device)
-            batch2 = Batch.from_data_list(graphs2).to(device)
+        for batch1, batch2 in dataloader:
+            batch1 = batch1.to(device, non_blocking=pin_memory)
+            batch2 = batch2.to(device, non_blocking=pin_memory)
 
             z1 = F.normalize(model(batch1), dim=1)
             z2 = F.normalize(model(batch2), dim=1)
@@ -300,6 +351,10 @@ def train_contrastive_model(
     plot_path: str | None = None,
     accelerator: "Accelerator | None" = None,
     model_builder: Callable[[], nn.Module] | None = None,
+    num_workers: int = 0,
+    pin_memory: bool = False,
+    prefetch_factor: int | None = None,
+    persistent_workers: bool | None = None,
 ) -> Tuple[nn.Module, List[float], List[float]]:
     """
     Contrastively train the EquivariantCrystalGCN on structures stored as CSVs.
@@ -313,10 +368,7 @@ def train_contrastive_model(
         )
 
     train_structs = read_structure_from_csv(train_csv)
-    dataset = StructureDataset(train_structs)
-
     val_structs = read_structure_from_csv(val_csv) if val_csv else train_structs
-    val_dataset = StructureDataset(val_structs)
 
     if model_builder is None:
         model = EquivariantCrystalGCN(
@@ -325,27 +377,38 @@ def train_contrastive_model(
     else:
         model = model_builder().to(torch_device)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
-    dataloader = DataLoader(
-        dataset, batch_size=batch_size, shuffle=True, collate_fn=lambda x: x
+    train_loader = make_contrastive_dataloader(
+        train_structs,
+        batch_size=batch_size,
+        num_rbf=num_rbf,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        prefetch_factor=prefetch_factor,
+        persistent_workers=persistent_workers,
+    )
+
+    val_loader = make_contrastive_dataloader(
+        val_structs,
+        batch_size=batch_size,
+        num_rbf=num_rbf,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        prefetch_factor=prefetch_factor,
+        persistent_workers=persistent_workers,
     )
 
     if accelerator is not None:
-        model, opt, dataloader = accelerator.prepare(model, opt, dataloader)
+        model, opt = accelerator.prepare(model, opt)
 
     val_intra, val_inter = [], []
 
     for epoch in range(epochs):
         ema_loss = 0.0
-        for step, structures in enumerate(dataloader):
-            graphs1 = [
-                structure_to_graph(augment(s), num_rbf=num_rbf) for s in structures
-            ]
-            graphs2 = [
-                structure_to_graph(augment(s), num_rbf=num_rbf) for s in structures
-            ]
-
-            batch1 = Batch.from_data_list(graphs1).to(torch_device)
-            batch2 = Batch.from_data_list(graphs2).to(torch_device)
+        for step, (batch1, batch2) in enumerate(train_loader):
+            batch1 = batch1.to(torch_device, non_blocking=pin_memory)
+            batch2 = batch2.to(torch_device, non_blocking=pin_memory)
 
             z1 = model(batch1)
             z2 = model(batch2)
@@ -362,10 +425,9 @@ def train_contrastive_model(
 
         intra, inter = validate(
             model,
-            val_dataset,
+            val_loader,
             device=torch_device,
-            batch_size=batch_size,
-            num_rbf=num_rbf,
+            pin_memory=pin_memory,
         )
         val_intra.append(intra)
         val_inter.append(inter)
