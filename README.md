@@ -19,11 +19,29 @@ The package depends on PyTorch, PyTorch Geometric, Pymatgen, POT (`ot`), pandas,
 
 Most scripts expect:
 
-- `train.csv` / `val.csv`: CSV files with a `cif` column containing serialized crystal structures (the MP20 dataset in our experiments).
+- `data/mp_20/train.csv` and `data/mp_20/val.csv`: CSV files with a `cif` column containing serialized crystal structures (the MP20 dataset in our experiments).
 - Optional WBM data under `wbm_data/`.
 - Generative model outputs stored in `data_models/*.csv` using the Wyckoff-format columns consumed by `load_structures_from_json_column`.
 
 Make sure these files are present in the working directory before running the example scripts.
+
+### Fetch the MP-20 split automatically
+
+1. Download and stage the DiffCSP MP-20 CSVs:
+
+    ```bash
+    python scripts/download_mp20.py
+    ```
+
+    This pulls `train.csv`, `val.csv`, and `test.csv` into `data/mp_20/`. Use `--force` to overwrite existing files or change the download destination with `--output-dir`.
+
+2. Launch training (after confirming the CSVs exist) with:
+
+    ```bash
+    python scripts/train_mp20.py --epochs 10 --checkpoint-path checkpoints/gcn_mp20.pt
+    ```
+
+    The training script is a thin wrapper around `train_contrastive_model`, so you can adjust hyperparameters and file paths through its CLI flags.
 
 ## Package layout
 
@@ -36,11 +54,14 @@ Make sure these files are present in the working directory before running the ex
 Train an equivariant encoder:
 
 ```python
+from pathlib import Path
 from matscinovelty.gcn import train_contrastive_model
 
+DATA_DIR = Path("data/mp_20")
+
 train_contrastive_model(
-    "train.csv",
-    val_csv="val.csv",
+    str(DATA_DIR / "train.csv"),
+    val_csv=str(DATA_DIR / "val.csv"),
     epochs=10,
     checkpoint_path="checkpoints/equivariant.pt",
     plot_path="imgs/validation_curve.png",
@@ -50,6 +71,7 @@ train_contrastive_model(
 Score a generative model:
 
 ```python
+from pathlib import Path
 import pandas as pd
 from matscinovelty import (
     EquivariantCrystalGCN,
@@ -58,7 +80,8 @@ from matscinovelty import (
     read_structure_from_csv,
 )
 
-train_structs = read_structure_from_csv("train.csv")
+DATA_DIR = Path("data/mp_20")
+train_structs = read_structure_from_csv(DATA_DIR / "train.csv")
 gen_structs = load_structures_from_json_column(pd.read_csv("data_models/mattergen.csv"))
 
 model = EquivariantCrystalGCN(hidden_dim=128)

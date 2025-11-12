@@ -15,6 +15,7 @@ from matscinovelty import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_MP20 = PROJECT_ROOT / "data" / "mp_20"
 WBM_DIR = PROJECT_ROOT / "wbm_data"
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 IMGS_DIR = PROJECT_ROOT / "imgs"
@@ -24,7 +25,7 @@ IMGS_DIR.mkdir(exist_ok=True)
 # 1️⃣ Load Data
 # ===========================================================
 print("Loading WBM data...")
-str_train = read_structure_from_csv(PROJECT_ROOT / "train.csv")
+str_train = read_structure_from_csv(DATA_MP20 / "train.csv")
 
 # --- Load stable WBM structures ---
 summary = pd.read_csv(WBM_DIR / "wbm-summary.txt", sep="\t", header=None)
@@ -35,9 +36,9 @@ def load_structures_for_step(step):
     path = WBM_DIR / f"wbm-structures-step-{step}.json"
     with open(path) as fh:
         data = json.load(fh)
-    mask = np.array([
-        stable[7].iloc[i].split("_")[1] == str(step) for i in range(len(stable))
-    ])
+    mask = np.array(
+        [stable[7].iloc[i].split("_")[1] == str(step) for i in range(len(stable))]
+    )
     subset = stable.iloc[np.where(mask)[0]]
     structs = [Structure.from_dict(data[e]["opt"]) for e in subset[7].values]
     print(f"Loaded {len(structs)} structures for WBM step {step}")

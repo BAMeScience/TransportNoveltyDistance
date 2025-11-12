@@ -16,6 +16,7 @@ from matscinovelty import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_MP20 = PROJECT_ROOT / "data" / "mp_20"
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 IMGS_DIR = PROJECT_ROOT / "imgs"
 IMGS_DIR.mkdir(exist_ok=True)
@@ -27,8 +28,8 @@ warnings.simplefilter("ignore", ComplexWarning)  # Suppress ComplexWarning speci
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # --- Load structures ---
-train_structs = read_structure_from_csv(PROJECT_ROOT / "train.csv")
-val_structs = read_structure_from_csv(PROJECT_ROOT / "val.csv")
+train_structs = read_structure_from_csv(DATA_MP20 / "train.csv")
+val_structs = read_structure_from_csv(DATA_MP20 / "val.csv")
 del val_structs[232]  # remove broken entry if needed
 
 # --- Load pretrained model ---

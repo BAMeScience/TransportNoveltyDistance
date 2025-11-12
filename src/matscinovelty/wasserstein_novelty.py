@@ -1,3 +1,15 @@
+"""
+Optimal-transport-based novelty scoring utilities.
+
+The routines in this module turn sets of crystal structures into feature
+embeddings (via an equivariant GNN or a user-provided featurizer) and run an
+optimal-transport alignment between a training set and generated samples. The
+alignment cost is then split into a "quality" term, which penalizes generated
+structures that drift too far from the training manifold, and a
+"memorization" term, which down-weights samples that exactly replicate the
+training data.
+"""
+
 from __future__ import annotations
 
 from typing import Callable, Optional, Sequence
@@ -11,7 +23,12 @@ from .utils import augment
 
 class OTNoveltyScorer:
     """
-    Evaluate generative models with the OT-based novelty metric proposed in the project.
+    Evaluate generative models with the OT-based novelty metric introduced in the
+    paper.
+
+    The scorer embeds all structures, calibrates a novelty threshold ``tau`` if
+    needed, and exposes :meth:`compute_novelty` to compute the weighted OT loss
+    against new samples.
     """
 
     def __init__(
@@ -26,6 +43,33 @@ class OTNoveltyScorer:
         device: str | torch.device | None = None,
         pretrained_weights: Optional[str] = None,
     ) -> None:
+        """
+        Parameters
+        ----------
+        train_structures
+            Reference dataset used to anchor novelty measurements.
+        gnn_model
+            Optional pre-initialized encoder whose :py:meth:`featurize` method
+            converts structures into embeddings. If omitted, a new
+            :class:`EquivariantCrystalGCN` is instantiated.
+        featurizer
+            Callable override that bypasses any GNN loading logic entirely.
+        tau
+            Fixed novelty threshold. If ``None`` a data-driven calibration is
+            performed (see ``tau_quantile``).
+        tau_quantile
+            If provided, ``tau`` is set to the transport-distance quantile
+            between two random halves of the training set. Otherwise a
+            leave-one-out / augmentation split is used.
+        memorization_weight
+            Relative weighting for the memorization component of the loss. When
+            not supplied a principled default is derived during calibration.
+        device
+            Torch device specifier for embedding computation.
+        pretrained_weights
+            Path to a checkpoint, loaded only when no ``gnn_model`` or
+            ``featurizer`` is provided.
+        """
         self.device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
         )
@@ -79,6 +123,25 @@ class OTNoveltyScorer:
         split_ratio: float = 0.5,
         quantile: float = 0.5,
     ):
+        """
+        Estimate ``tau`` from the OT distance between two subsets of the training
+        features.
+
+        Parameters
+        ----------
+        fine_features
+            Embedded training structures.
+        split_ratio
+            Fraction of samples placed into the first subset (the rest go into
+            the second subset).
+        quantile
+            Percentile of the OT distance distribution to use as the cutoff.
+
+        Returns
+        -------
+        float
+            Empirical OT distance quantile used as the novelty threshold.
+        """
         n = fine_features.size(0)
         n1 = int(split_ratio * n)
         idx = torch.randperm(n)
@@ -97,6 +160,18 @@ class OTNoveltyScorer:
     def calibrate_principled_tau(self) -> tuple[float, float]:
         """
         Separate augmented copies from real samples via a brute-force threshold search.
+
+        Returns
+        -------
+        (tau, memorization_scale)
+            ``tau`` maximizes separation between leave-one-out distances and
+            augmented copies; the second value rescales the memorization penalty
+            so that both terms lie on comparable magnitudes.
+
+        Raises
+        ------
+        ValueError
+            If fewer than two training structures are available.
         """
         if len(self.train_structs) < 2:
             raise ValueError("Calibration requires at least two training structures.")
@@ -131,6 +206,20 @@ class OTNoveltyScorer:
         return optimal_tau, m_scale
 
     def _get_ot_plan(self, X: torch.Tensor, Y: torch.Tensor):
+        """
+        Compute the balanced OT transport plan between two embedding sets.
+
+        Parameters
+        ----------
+        X, Y
+            Embeddings for the source (training) and target (generated) sets.
+
+        Returns
+        -------
+        tuple[torch.Tensor, torch.Tensor]
+            ``(P, C)`` where ``P`` is the optimal transport plan and ``C`` the
+            pairwise distance matrix.
+        """
         a = torch.full((X.size(0),), 1.0 / X.size(0))
         b = torch.full((Y.size(0),), 1.0 / Y.size(0))
         C = torch.cdist(X, Y, p=2)
@@ -140,6 +229,16 @@ class OTNoveltyScorer:
     def compute_novelty(self, gen_structures: Sequence):
         """
         Compute the total OT-based novelty loss alongside its quality/memorization parts.
+
+        Parameters
+        ----------
+        gen_structures
+            Iterable of structures produced by a generative model.
+
+        Returns
+        -------
+        tuple[float, float, float]
+            ``(total, quality, memorization)`` scalar losses.
         """
         gen_feats = self.featurizer(gen_structures).to(self.device)
         P, C = self._get_ot_plan(self.train_feats, gen_feats)

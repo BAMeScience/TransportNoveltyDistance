@@ -81,10 +81,12 @@ class EquivariantCrystalGCN(nn.Module):
         super().__init__()
         self.num_rbf = num_rbf
         self.emb = nn.Embedding(100, hidden_dim)
-        self.layers = nn.ModuleList([
-            EGNNLayer(hidden_dim, hidden_dim, edge_features=num_rbf)
-            for _ in range(n_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                EGNNLayer(hidden_dim, hidden_dim, edge_features=num_rbf)
+                for _ in range(n_layers)
+            ]
+        )
         self.lin = nn.Linear(hidden_dim, hidden_dim)
         self.lattice_scale_abc = 10.0
         self.lattice_scale_angles = 180.0
@@ -325,9 +327,10 @@ def train_contrastive_model(
 
 
 if __name__ == "__main__":
+    data_dir = Path(__file__).resolve().parents[2] / "data" / "mp_20"
     train_contrastive_model(
-        "train.csv",
-        val_csv="val.csv",
+        str(data_dir / "train.csv"),
+        val_csv=str(data_dir / "val.csv"),
         checkpoint_path="gcn_tau1.pt",
         plot_path="imgs/validation_curve.png",
     )

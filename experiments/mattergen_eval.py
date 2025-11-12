@@ -12,6 +12,7 @@ from matscinovelty import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_MP20 = PROJECT_ROOT / "data" / "mp_20"
 DATA_MODELS = PROJECT_ROOT / "data_models"
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 IMGS_DIR = PROJECT_ROOT / "imgs"
@@ -21,8 +22,8 @@ IMGS_DIR.mkdir(exist_ok=True)
 # 1️⃣ Load Data
 # ===========================================================
 print("Loading structures...")
-str_train = read_structure_from_csv(PROJECT_ROOT / "train.csv")
-str_val = read_structure_from_csv(PROJECT_ROOT / "val.csv")
+str_train = read_structure_from_csv(DATA_MP20 / "train.csv")
+str_val = read_structure_from_csv(DATA_MP20 / "val.csv")
 
 
 def load_generated_model(path):

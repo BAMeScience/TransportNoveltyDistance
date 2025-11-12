@@ -1,0 +1,13 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+
+# Large artifacts produced locally
+imgs/
+
+# Downloaded dataset files
+data/mp_20/
+!data/README.md
