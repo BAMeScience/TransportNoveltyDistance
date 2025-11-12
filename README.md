@@ -15,6 +15,11 @@ pip install -e .  # editable install for local development
 
 The package depends on PyTorch, PyTorch Geometric, Pymatgen, POT (`ot`), pandas, numpy, and matplotlib. You may need to follow the [PyTorch Geometric installation guide](https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html) if wheels are not available for your CUDA/CPU combination.
 
+> **Note:** SchNet-based models (e.g., `SchNetEncoder` or `--model schnet` in `scripts/train_mp20.py`) require the optional `torch-cluster` dependency. Install it via the PyG instructions above, e.g.:
+> ```bash
+> pip install torch-cluster -f https://data.pyg.org/whl/torch-$(python -c "import torch; print(torch.__version__)").html
+> ```
+
 ## Data requirements
 
 Most scripts expect:

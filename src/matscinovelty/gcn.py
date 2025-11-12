@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch_geometric.data import Batch
 from torch_geometric.nn import CGConv, global_mean_pool
 from torch_geometric.nn.models import SchNet as PyGSchNet
+from torch_geometric.typing import WITH_TORCH_CLUSTER
 
 warnings.filterwarnings(
     "ignore",
@@ -192,7 +193,14 @@ class SchNetEncoder(nn.Module):
         readout: str = "mean",
     ) -> None:
         super().__init__()
+        if not WITH_TORCH_CLUSTER:
+            raise ImportError(
+                "SchNetEncoder requires the optional 'torch-cluster' dependency. "
+                "Install it with pip following the PyTorch Geometric instructions "
+                "(https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html)."
+            )
         self.cutoff = cutoff
+        self.embedding_dim = embedding_dim
         self.model = PyGSchNet(
             hidden_channels=hidden_channels,
             num_filters=num_filters,
@@ -201,12 +209,16 @@ class SchNetEncoder(nn.Module):
             cutoff=cutoff,
             max_num_neighbors=max_neighbors,
             readout=readout,
-            out_channels=embedding_dim,
         )
+        if embedding_dim != hidden_channels:
+            self.out_proj = nn.Linear(hidden_channels, embedding_dim)
+        else:
+            self.out_proj = nn.Identity()
 
     def forward(self, data):
         z = getattr(data, "z", data.x)
-        return self.model(z=z, pos=data.pos, batch=data.batch)
+        out = self.model(z=z, pos=data.pos, batch=data.batch)
+        return self.out_proj(out)
 
     @torch.no_grad()
     def featurize(self, structures: Sequence, device: str | torch.device | None = None):
