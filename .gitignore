@@ -10,4 +10,5 @@ imgs/
 
 # Downloaded dataset files
 data/mp_20/
+data/xtalmet_models/
 !data/README.md

@@ -43,6 +43,17 @@ Make sure these files are present in the working directory before running the ex
 
     The training script is a thin wrapper around `train_contrastive_model`, so you can adjust hyperparameters and file paths through its CLI flags.
 
+### Download xtalmet model outputs (MatterGen, DiffCSP, …)
+
+Some experiments (e.g., `experiments/model_eval.py`) compare against published generative outputs packaged as pickled `Structure` lists on Hugging Face. Grab them via:
+
+```bash
+python scripts/download_xtalmet_models.py
+```
+
+This stores the files under `data/xtalmet_models/`. Use `--force` to re-download or `--output-dir` if you prefer a different cache directory.
+The helper requires `huggingface_hub`; install it via `pip install huggingface_hub` if it's not already available in your environment.
+
 ## Package layout
 
 - `matscinovelty.gcn`: Equivariant GNN encoder (`EquivariantCrystalGCN`), simpler CGConv model (`CrystalGCN`), InfoNCE loss, validation utilities, and a helper `train_contrastive_model`.

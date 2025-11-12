@@ -15,3 +15,14 @@ python scripts/train_mp20.py --epochs 10 --checkpoint-path checkpoints/gcn_mp20.
 `download_mp20.py` handles grabbing `train.csv`, `val.csv`, and `test.csv` into `data/mp_20/`. Pass `--force` to overwrite existing files or change the destination with `--output-dir`.
 
 `train_mp20.py` is a CLI wrapper around `train_contrastive_model`; tweak hyperparameters and artifact paths through its flags. The script will exit early with a helpful message if the train/val CSVs are missing, so always run the download step (or supply your own CSV paths) first.
+
+## xtalmet model outputs
+
+The novelty benchmarks in `experiments/model_eval.py` rely on pickled structure lists from the xtalmet dataset. To fetch them:
+
+```bash
+python scripts/download_xtalmet_models.py
+```
+
+By default the files land in `data/xtalmet_models/`. Use `--force` to overwrite or `--output-dir` to select another folder before running the evaluation script.
+This helper depends on `huggingface_hub`, so run `pip install huggingface_hub` if the module is missing.

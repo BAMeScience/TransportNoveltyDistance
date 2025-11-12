@@ -13,6 +13,7 @@ from .gcn import (
 from .utils import (
     StructureDataset,
     augment,
+    canonicalize_structure,
     coverage_score,
     load_structures_from_json_column,
     load_wyckoff_structures,
@@ -30,6 +31,7 @@ __all__ = [
     "CrystalGCN",
     "EGNNLayer",
     "EquivariantCrystalGCN",
+    "canonicalize_structure",
     "info_nce_loss",
     "train_contrastive_model",
     "validate",

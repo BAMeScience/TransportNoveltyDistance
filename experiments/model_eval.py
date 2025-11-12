@@ -1,22 +1,31 @@
+import pickle
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import torch
 
 from matscinovelty import (
     EquivariantCrystalGCN,
     OTNoveltyScorer,
+    canonicalize_structure,
     coverage_score,
-    load_structures_from_json_column,
     novelty_score,
     read_structure_from_csv,
 )
 
+try:  # Ensure xtalmet package is present for pickle deserialization.
+    import xtalmet  # noqa: F401
+except ModuleNotFoundError as exc:  # pragma: no cover - runtime guard
+    raise SystemExit(
+        "The xtalmet package is required to deserialize the downloaded pickles. "
+        "Install it (or provide an equivalent shim on PYTHONPATH) before running this script."
+    ) from exc
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_MP20 = PROJECT_ROOT / "data" / "mp_20"
 DATA_MODELS = PROJECT_ROOT / "data_models"
+DATA_XTALMET = PROJECT_ROOT / "data" / "xtalmet_models"
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 IMGS_DIR = PROJECT_ROOT / "imgs"
 IMGS_DIR.mkdir(exist_ok=True)
@@ -28,8 +37,15 @@ print("Loading structures...")
 str_train = read_structure_from_csv(DATA_MP20 / "train.csv")
 str_val = read_structure_from_csv(DATA_MP20 / "val.csv")
 
-def load_generated_model(path: str, canonicalize: bool = True):
+
+def load_generated_model(path: Path, canonicalize: bool = True):
     """Load a list of pymatgen Structures from a pickle file, optionally canonicalizing each."""
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing {path}. Run scripts/download_xtalmet_models.py or point the "
+            "script at a folder containing the xtalmet pickles."
+        )
+
     with open(path, "rb") as f:
         data = pickle.load(f)
 
@@ -40,14 +56,13 @@ def load_generated_model(path: str, canonicalize: bool = True):
     return data
 
 
-
-# all generative models
-struc_mattergen      = load_generated_model("data_new/mattergen.pkl")
-struc_diffcsp        = load_generated_model("data_new/diffcsp.pkl")
-struc_diffcspplus    = load_generated_model("data_new/diffcsppp.pkl")
-struc_cdvae  = load_generated_model("data_new/cdvae.pkl")
-struc_adit        = load_generated_model("data_new/adit.pkl")
-struc_chemeleon = load_generated_model("data_new/chemeleon.pkl")
+# all generative models (downloaded via scripts/download_xtalmet_models.py)
+struc_mattergen = load_generated_model(DATA_XTALMET / "mattergen.pkl")
+struc_diffcsp = load_generated_model(DATA_XTALMET / "diffcsp.pkl")
+struc_diffcspplus = load_generated_model(DATA_XTALMET / "diffcsppp.pkl")
+struc_cdvae = load_generated_model(DATA_XTALMET / "cdvae.pkl")
+struc_adit = load_generated_model(DATA_XTALMET / "adit.pkl")
+struc_chemeleon = load_generated_model(DATA_XTALMET / "chemeleon.pkl")
 
 structure_list = [
     str_val,
@@ -56,7 +71,7 @@ structure_list = [
     struc_diffcspplus,
     struc_cdvae,
     struc_adit,
-    struc_chemeleon
+    struc_chemeleon,
 ]
 
 model_names = [
@@ -65,9 +80,8 @@ model_names = [
     "DiffCSP",
     "DiffCSP++",
     "CdVAE",
-    "Adit", 
-    "Chemeleon"
-
+    "Adit",
+    "Chemeleon",
 ]
 
 # ===========================================================
