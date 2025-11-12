@@ -41,7 +41,7 @@ Make sure these files are present in the working directory before running the ex
     python scripts/train_mp20.py --epochs 10 --checkpoint-path checkpoints/gcn_mp20.pt
     ```
 
-    The training script is a thin wrapper around `train_contrastive_model`, so you can adjust hyperparameters and file paths through its CLI flags. Pass `--accelerate` (after `pip install accelerate` or `pip install -e .[train]`) to launch via Hugging Face Accelerate for multi-GPU/distributed runs.
+    The training script is a thin wrapper around `train_contrastive_model`, so you can adjust hyperparameters and file paths through its CLI flags. Use `--model {equivariant,cgc,schnet}` to pick the backbone, and pass `--accelerate` (after `pip install accelerate` or `pip install -e .[train]`) to launch via Hugging Face Accelerate for multi-GPU/distributed runs.
 
 ### Download xtalmet model outputs (MatterGen, DiffCSP, …)
 
@@ -66,7 +66,7 @@ The script writes the summary CSV, initial atoms archive, and (by default) the r
 
 ## Package layout
 
-- `matscinovelty.gcn`: Equivariant GNN encoder (`EquivariantCrystalGCN`), simpler CGConv model (`CrystalGCN`), InfoNCE loss, validation utilities, and a helper `train_contrastive_model`.
+- `matscinovelty.gcn`: Equivariant GNN encoder (`EquivariantCrystalGCN`), SchNet/CGCNN-style embedding backbones (`SchNetEncoder`, `CGCNNEncoder`), InfoNCE loss, validation utilities, and a helper `train_contrastive_model`.
 - `matscinovelty.utils`: Structure loading helpers, PyG graph conversion, augmentation/perturbation routines, and novelty/coverage statistics.
 - `matscinovelty.wasserstein_novelty`: `OTNoveltyScorer`, which computes quality/memorization losses via optimal transport in the learned feature space.
 
@@ -111,6 +111,12 @@ model.load_state_dict(torch.load("checkpoints/gcn_fine.pt", map_location="cpu"))
 scorer = OTNoveltyScorer(train_structs, gnn_model=model, device="cpu", tau=0.36, memorization_weight=10.0)
 total, quality, memorization = scorer.compute_novelty(gen_structs)
 print(total, quality, memorization)
+
+# Prefer a lightweight encoder for embeddings only?
+from matscinovelty import SchNetEncoder, CGCNNEncoder
+
+schnet = SchNetEncoder(embedding_dim=256)   # SchNet backbone
+cgnn = CGCNNEncoder(hidden_dim=128)         # CGCNN-style backbone
 ```
 
 ## Experiments

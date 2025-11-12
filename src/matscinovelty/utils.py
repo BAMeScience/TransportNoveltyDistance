@@ -143,7 +143,7 @@ def structure_to_graph(structure, cutoff=8.0, num_rbf=32):
         edge_index = torch.zeros((2, num_edges), dtype=torch.long)
         edge_attr = torch.zeros((num_edges, num_rbf), dtype=torch.float)
 
-    return Data(x=z, pos=pos, edge_index=edge_index, edge_attr=edge_attr)
+    return Data(x=z, z=z, pos=pos, edge_index=edge_index, edge_attr=edge_attr)
 
 
 def read_csv(filename):

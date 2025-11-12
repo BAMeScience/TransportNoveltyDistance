@@ -11,9 +11,10 @@ warnings.filterwarnings(
 )
 
 from .gcn import (
-    CrystalGCN,
+    CGCNNEncoder,
     EGNNLayer,
     EquivariantCrystalGCN,
+    SchNetEncoder,
     info_nce_loss,
     train_contrastive_model,
     validate,
@@ -36,9 +37,10 @@ from .utils import (
 from .wasserstein_novelty import OTNoveltyScorer
 
 __all__ = [
-    "CrystalGCN",
+    "CGCNNEncoder",
     "EGNNLayer",
     "EquivariantCrystalGCN",
+    "SchNetEncoder",
     "canonicalize_structure",
     "info_nce_loss",
     "train_contrastive_model",

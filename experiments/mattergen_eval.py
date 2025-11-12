@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 
 from matscinovelty import (
-    CrystalGCN,
+    CGCNNEncoder,
     OTNoveltyScorer,
     load_structures_from_json_column,
     read_structure_from_csv,
@@ -46,7 +46,7 @@ model_names = ["Validation", "MatterGen", "MatterGen-DFT"]
 # ===========================================================
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Loading pretrained GCN model...")
-model = CrystalGCN(hidden_dim=128).to(device)
+model = CGCNNEncoder(hidden_dim=128).to(device)
 checkpoint_path = CHECKPOINTS_DIR / "gcn_fine.pt"
 model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 print("Loaded weights from gcn_fine.pt ✅")

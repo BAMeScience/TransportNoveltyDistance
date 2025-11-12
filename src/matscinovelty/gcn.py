@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING, List, Sequence, Tuple
 import warnings
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, List, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
 from torch_geometric.nn import CGConv, global_mean_pool
+from torch_geometric.nn.models import SchNet as PyGSchNet
 
 warnings.filterwarnings(
     "ignore",
@@ -19,7 +20,7 @@ warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
-from .utils import (
+from .utils import (  # noqa: E402
     StructureDataset,
     augment,
     read_structure_from_csv,
@@ -91,12 +92,10 @@ class EquivariantCrystalGCN(nn.Module):
         super().__init__()
         self.num_rbf = num_rbf
         self.emb = nn.Embedding(100, hidden_dim)
-        self.layers = nn.ModuleList(
-            [
-                EGNNLayer(hidden_dim, hidden_dim, edge_features=num_rbf)
-                for _ in range(n_layers)
-            ]
-        )
+        self.layers = nn.ModuleList([
+            EGNNLayer(hidden_dim, hidden_dim, edge_features=num_rbf)
+            for _ in range(n_layers)
+        ])
         self.lin = nn.Linear(hidden_dim, hidden_dim)
         self.lattice_scale_abc = 10.0
         self.lattice_scale_angles = 180.0
@@ -153,27 +152,75 @@ class EquivariantCrystalGCN(nn.Module):
         return z.cpu()
 
 
-class CrystalGCN(nn.Module):
-    """Simpler CGConv-based encoder without explicit positional updates."""
+class CGCNNEncoder(nn.Module):
+    """CGCNN-style encoder using CGConv layers for fast embedding extraction."""
 
-    def __init__(self, hidden_dim: int = 128, num_rbf: int = 32) -> None:
+    def __init__(
+        self, hidden_dim: int = 128, num_rbf: int = 32, num_layers: int = 3
+    ) -> None:
         super().__init__()
+        if num_layers < 1:
+            raise ValueError("CGCNNEncoder requires at least one convolutional layer.")
         self.emb = nn.Embedding(100, hidden_dim)
-        self.conv1 = CGConv(hidden_dim, dim=num_rbf)
-        self.conv2 = CGConv(hidden_dim, dim=num_rbf)
-        self.conv3 = CGConv(hidden_dim, dim=num_rbf)
+        self.convs = nn.ModuleList(
+            CGConv(hidden_dim, dim=num_rbf) for _ in range(num_layers)
+        )
         self.lin = nn.Linear(hidden_dim, hidden_dim)
 
     def forward(self, data):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         x = self.emb(x)
 
-        x = F.relu(self.conv1(x, edge_index, edge_attr))
-        x = F.relu(self.conv2(x, edge_index, edge_attr))
-        x = F.relu(self.conv3(x, edge_index, edge_attr))
+        for conv in self.convs:
+            x = F.silu(conv(x, edge_index, edge_attr))
 
         x = global_mean_pool(x, data.batch)
         return self.lin(x)
+
+
+class SchNetEncoder(nn.Module):
+    """Wrapper around PyG's SchNet for graph-level embeddings."""
+
+    def __init__(
+        self,
+        embedding_dim: int = 128,
+        hidden_channels: int = 128,
+        num_filters: int = 128,
+        num_interactions: int = 3,
+        num_gaussians: int = 50,
+        cutoff: float = 8.0,
+        max_neighbors: int = 32,
+        readout: str = "mean",
+    ) -> None:
+        super().__init__()
+        self.cutoff = cutoff
+        self.model = PyGSchNet(
+            hidden_channels=hidden_channels,
+            num_filters=num_filters,
+            num_interactions=num_interactions,
+            num_gaussians=num_gaussians,
+            cutoff=cutoff,
+            max_num_neighbors=max_neighbors,
+            readout=readout,
+            out_channels=embedding_dim,
+        )
+
+    def forward(self, data):
+        z = getattr(data, "z", data.x)
+        return self.model(z=z, pos=data.pos, batch=data.batch)
+
+    @torch.no_grad()
+    def featurize(self, structures: Sequence, device: str | torch.device | None = None):
+        device = (
+            torch.device(device)
+            if device is not None
+            else next(self.parameters()).device
+        )
+        self.eval()
+        graphs = [structure_to_graph(s, cutoff=self.cutoff) for s in structures]
+        batch = Batch.from_data_list(graphs).to(device)
+        embeddings = self(batch)
+        return embeddings.detach().cpu()
 
 
 def validate(
@@ -252,7 +299,8 @@ def train_contrastive_model(
     checkpoint_path: str | None = None,
     plot_path: str | None = None,
     accelerator: "Accelerator | None" = None,
-) -> Tuple[EquivariantCrystalGCN, List[float], List[float]]:
+    model_builder: Callable[[], nn.Module] | None = None,
+) -> Tuple[nn.Module, List[float], List[float]]:
     """
     Contrastively train the EquivariantCrystalGCN on structures stored as CSVs.
     Returns the trained model plus tracked intra/inter validation curves.
@@ -270,9 +318,12 @@ def train_contrastive_model(
     val_structs = read_structure_from_csv(val_csv) if val_csv else train_structs
     val_dataset = StructureDataset(val_structs)
 
-    model = EquivariantCrystalGCN(
-        hidden_dim=hidden_dim, num_rbf=num_rbf, n_layers=n_layers
-    ).to(torch_device)
+    if model_builder is None:
+        model = EquivariantCrystalGCN(
+            hidden_dim=hidden_dim, num_rbf=num_rbf, n_layers=n_layers
+        ).to(torch_device)
+    else:
+        model = model_builder().to(torch_device)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     dataloader = DataLoader(
         dataset, batch_size=batch_size, shuffle=True, collate_fn=lambda x: x

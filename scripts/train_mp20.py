@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from matscinovelty import CGCNNEncoder, SchNetEncoder
 from matscinovelty.gcn import train_contrastive_model
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -38,12 +39,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional path to store the validation curve plot.",
     )
+    parser.add_argument(
+        "--model",
+        choices=("equivariant", "cgc", "schnet"),
+        default="equivariant",
+        help="Backbone architecture to train.",
+    )
     parser.add_argument("--epochs", type=int, default=10, help="Training epochs.")
     parser.add_argument("--batch-size", type=int, default=128, help="Batch size.")
     parser.add_argument("--lr", type=float, default=1e-3, help="Adam learning rate.")
     parser.add_argument("--tau", type=float, default=0.1, help="InfoNCE temperature.")
     parser.add_argument(
-        "--hidden-dim", type=int, default=128, help="EGNN embedding dimension."
+        "--hidden-dim", type=int, default=128, help="Embedding dimension."
     )
     parser.add_argument(
         "--num-rbf", type=int, default=32, help="Number of RBF features per edge."
@@ -94,6 +101,26 @@ def main() -> None:
     if _is_main():
         print("🚀 Launching training on MP-20 splits.")
 
+    def make_model_builder():
+        if args.model == "equivariant":
+            return None
+        if args.model == "cgc":
+            return lambda: CGCNNEncoder(
+                hidden_dim=args.hidden_dim,
+                num_rbf=args.num_rbf,
+                num_layers=args.n_layers,
+            )
+        if args.model == "schnet":
+            return lambda: SchNetEncoder(
+                embedding_dim=args.hidden_dim,
+                hidden_channels=args.hidden_dim,
+                num_gaussians=args.num_rbf,
+                num_interactions=args.n_layers,
+            )
+        raise ValueError(f"Unknown model type: {args.model}")
+
+    model_builder = make_model_builder()
+
     train_contrastive_model(
         str(args.train_csv),
         val_csv=str(args.val_csv),
@@ -108,6 +135,7 @@ def main() -> None:
         checkpoint_path=str(args.checkpoint_path) if args.checkpoint_path else None,
         plot_path=str(args.plot_path) if args.plot_path else None,
         accelerator=accelerator,
+        model_builder=model_builder,
     )
     if _is_main():
         print(f"✅ Training finished. Checkpoint saved to {args.checkpoint_path}.")
