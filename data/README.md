@@ -14,7 +14,7 @@ python scripts/train_mp20.py --epochs 10 --checkpoint-path checkpoints/gcn_mp20.
 
 `download_mp20.py` handles grabbing `train.csv`, `val.csv`, and `test.csv` into `data/mp_20/`. Pass `--force` to overwrite existing files or change the destination with `--output-dir`.
 
-`train_mp20.py` is a CLI wrapper around `train_contrastive_model`; tweak hyperparameters and artifact paths through its flags. The script will exit early with a helpful message if the train/val CSVs are missing, so always run the download step (or supply your own CSV paths) first.
+`train_mp20.py` is a CLI wrapper around `train_contrastive_model`; tweak hyperparameters and artifact paths through its flags. The script will exit early with a helpful message if the train/val CSVs are missing, so always run the download step (or supply your own CSV paths) first. Add `--accelerate` (after `pip install accelerate` or `pip install -e .[train]`) to launch via Hugging Face Accelerate for multi-device/distributed runs.
 
 ## xtalmet model outputs
 

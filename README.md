@@ -41,7 +41,7 @@ Make sure these files are present in the working directory before running the ex
     python scripts/train_mp20.py --epochs 10 --checkpoint-path checkpoints/gcn_mp20.pt
     ```
 
-    The training script is a thin wrapper around `train_contrastive_model`, so you can adjust hyperparameters and file paths through its CLI flags.
+    The training script is a thin wrapper around `train_contrastive_model`, so you can adjust hyperparameters and file paths through its CLI flags. Pass `--accelerate` (after `pip install accelerate` or `pip install -e .[train]`) to launch via Hugging Face Accelerate for multi-GPU/distributed runs.
 
 ### Download xtalmet model outputs (MatterGen, DiffCSP, …)
 

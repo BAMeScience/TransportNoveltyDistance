@@ -56,6 +56,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Device string passed to train_contrastive_model (default: auto).",
     )
+    parser.add_argument(
+        "--accelerate",
+        action="store_true",
+        help="Use Hugging Face Accelerate to manage devices/distributed training.",
+    )
     return parser.parse_args()
 
 
@@ -72,7 +77,23 @@ def main() -> None:
     verify_csv(args.train_csv, "train")
     verify_csv(args.val_csv, "val")
 
-    print("🚀 Launching training on MP-20 splits.")
+    accelerator = None
+    if args.accelerate:
+        try:
+            from accelerate import Accelerator
+        except ImportError as exc:  # pragma: no cover - optional dep
+            raise SystemExit(
+                "Accelerate is not installed. Install it via `pip install accelerate` "
+                "or rerun without --accelerate."
+            ) from exc
+        accelerator = Accelerator()
+
+    def _is_main():
+        return accelerator is None or accelerator.is_main_process
+
+    if _is_main():
+        print("🚀 Launching training on MP-20 splits.")
+
     train_contrastive_model(
         str(args.train_csv),
         val_csv=str(args.val_csv),
@@ -86,8 +107,10 @@ def main() -> None:
         device=args.device,
         checkpoint_path=str(args.checkpoint_path) if args.checkpoint_path else None,
         plot_path=str(args.plot_path) if args.plot_path else None,
+        accelerator=accelerator,
     )
-    print(f"✅ Training finished. Checkpoint saved to {args.checkpoint_path}.")
+    if _is_main():
+        print(f"✅ Training finished. Checkpoint saved to {args.checkpoint_path}.")
 
 
 if __name__ == "__main__":

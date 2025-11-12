@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import TYPE_CHECKING, List, Sequence, Tuple
+import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,12 +13,21 @@ from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
 from torch_geometric.nn import CGConv, global_mean_pool
 
+warnings.filterwarnings(
+    "ignore",
+    message="`torch_geometric.distributed` has been deprecated",
+    category=DeprecationWarning,
+)
+
 from .utils import (
     StructureDataset,
     augment,
     read_structure_from_csv,
     structure_to_graph,
 )
+
+if TYPE_CHECKING:  # pragma: no cover
+    from accelerate import Accelerator
 
 
 class EGNNLayer(nn.Module):
@@ -241,14 +251,18 @@ def train_contrastive_model(
     device: str | torch.device | None = None,
     checkpoint_path: str | None = None,
     plot_path: str | None = None,
+    accelerator: "Accelerator | None" = None,
 ) -> Tuple[EquivariantCrystalGCN, List[float], List[float]]:
     """
     Contrastively train the EquivariantCrystalGCN on structures stored as CSVs.
     Returns the trained model plus tracked intra/inter validation curves.
     """
-    torch_device = torch.device(
-        device or ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    if accelerator is not None:
+        torch_device = accelerator.device
+    else:
+        torch_device = torch.device(
+            device or ("cuda" if torch.cuda.is_available() else "cpu")
+        )
 
     train_structs = read_structure_from_csv(train_csv)
     dataset = StructureDataset(train_structs)
@@ -263,6 +277,9 @@ def train_contrastive_model(
     dataloader = DataLoader(
         dataset, batch_size=batch_size, shuffle=True, collate_fn=lambda x: x
     )
+
+    if accelerator is not None:
+        model, opt, dataloader = accelerator.prepare(model, opt, dataloader)
 
     val_intra, val_inter = [], []
 
@@ -284,7 +301,10 @@ def train_contrastive_model(
 
             loss = info_nce_loss(z1, z2, tau=tau)
             opt.zero_grad()
-            loss.backward()
+            if accelerator is not None:
+                accelerator.backward(loss)
+            else:
+                loss.backward()
             opt.step()
 
             ema_loss = (loss.item() + ema_loss * step) / (step + 1)
@@ -299,16 +319,18 @@ def train_contrastive_model(
         val_intra.append(intra)
         val_inter.append(inter)
 
-        print(
-            f"Epoch {epoch + 1}: loss={ema_loss:.4f} | intra={intra:.3f} | inter={inter:.3f}"
-        )
+        if accelerator is None or accelerator.is_main_process:
+            print(
+                f"Epoch {epoch + 1}: loss={ema_loss:.4f} | intra={intra:.3f} | inter={inter:.3f}"
+            )
 
-        if checkpoint_path:
+        if checkpoint_path and (accelerator is None or accelerator.is_main_process):
             checkpoint_file = Path(checkpoint_path)
             checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(model.state_dict(), checkpoint_file)
+            target_model = accelerator.unwrap_model(model) if accelerator else model
+            torch.save(target_model.state_dict(), checkpoint_file)
 
-    if plot_path:
+    if plot_path and (accelerator is None or accelerator.is_main_process):
         plot_file = Path(plot_path)
         plot_file.parent.mkdir(parents=True, exist_ok=True)
         plt.figure(figsize=(6, 4))
@@ -324,14 +346,5 @@ def train_contrastive_model(
         plt.savefig(plot_file, dpi=300)
         plt.close()
 
-    return model, val_intra, val_inter
-
-
-if __name__ == "__main__":
-    data_dir = Path(__file__).resolve().parents[2] / "data" / "mp_20"
-    train_contrastive_model(
-        str(data_dir / "train.csv"),
-        val_csv=str(data_dir / "val.csv"),
-        checkpoint_path="gcn_tau1.pt",
-        plot_path="imgs/validation_curve.png",
-    )
+    final_model = accelerator.unwrap_model(model) if accelerator else model
+    return final_model, val_intra, val_inter
