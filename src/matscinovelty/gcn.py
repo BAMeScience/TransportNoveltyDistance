@@ -201,6 +201,8 @@ class SchNetEncoder(nn.Module):
             )
         self.cutoff = cutoff
         self.embedding_dim = embedding_dim
+        self._edge_index = None
+        self._edge_weight = None
         self.model = PyGSchNet(
             hidden_channels=hidden_channels,
             num_filters=num_filters,
@@ -209,14 +211,37 @@ class SchNetEncoder(nn.Module):
             cutoff=cutoff,
             max_num_neighbors=max_neighbors,
             readout=readout,
+            interaction_graph=self._interaction_graph,
         )
         if embedding_dim != hidden_channels:
             self.out_proj = nn.Linear(hidden_channels, embedding_dim)
         else:
             self.out_proj = nn.Identity()
 
+    def _interaction_graph(self, pos, batch):
+        if self._edge_index is None or self._edge_weight is None:
+            raise RuntimeError(
+                "SchNetEncoder interaction_graph was called without cached edges. "
+                "Ensure edge_index/edge_weight are provided."
+            )
+        return self._edge_index, self._edge_weight
+
     def forward(self, data):
         z = getattr(data, "z", data.x)
+
+        edge_index = getattr(data, "edge_index", None)
+        edge_shift = getattr(data, "edge_shift", None)
+
+        if edge_index is None or edge_shift is None or edge_index.numel() == 0:
+            raise ValueError(
+                "SchNetEncoder expects edge_index and edge_shift on each PyG Data object."
+            )
+
+        device = data.pos.device
+        self._edge_index = edge_index.to(device)
+        row, col = self._edge_index
+        rel = data.pos[row] - (data.pos[col] + edge_shift.to(device))
+        self._edge_weight = rel.norm(dim=-1)
         out = self.model(z=z, pos=data.pos, batch=data.batch)
         return self.out_proj(out)
 

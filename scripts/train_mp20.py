@@ -13,7 +13,7 @@ DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "mp_20"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train the EquivariantCrystalGCN on the MP-20 CSVs."
+        description="Train a lattice/graph encoder on the MP-20 CSVs."
     )
     parser.add_argument(
         "--train-csv",

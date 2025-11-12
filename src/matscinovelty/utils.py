@@ -118,7 +118,7 @@ def structure_to_graph(structure, cutoff=8.0, num_rbf=32):
     centers = torch.linspace(0, cutoff, num_rbf)
     gamma = 10.0
 
-    edge_index, edge_attr = [], []
+    edge_index, edge_attr, edge_weight, edge_shift = [], [], [], []
 
     for i in range(len(structure)):
         try:
@@ -131,19 +131,35 @@ def structure_to_graph(structure, cutoff=8.0, num_rbf=32):
 
         for nn in neighs:
             j = nn["site_index"]
-            d = nn["weight"]
+            d = float(nn["weight"])
             edge_index.append([i, j])
             edge_attr.append(torch.exp(-gamma * (d - centers) ** 2))
+            edge_weight.append(d)
+            image = np.asarray(nn.get("image", (0, 0, 0)), dtype=float)
+            shift_vec = structure.lattice.get_cartesian_coords(image)
+            edge_shift.append(torch.tensor(shift_vec, dtype=torch.float))
 
     if edge_index:
         edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
         edge_attr = torch.stack(edge_attr)
+        edge_weight = torch.tensor(edge_weight, dtype=torch.float)
+        edge_shift = torch.stack(edge_shift)
     else:
         num_edges = 0
         edge_index = torch.zeros((2, num_edges), dtype=torch.long)
         edge_attr = torch.zeros((num_edges, num_rbf), dtype=torch.float)
+        edge_weight = torch.zeros((num_edges,), dtype=torch.float)
+        edge_shift = torch.zeros((num_edges, 3), dtype=torch.float)
 
-    return Data(x=z, z=z, pos=pos, edge_index=edge_index, edge_attr=edge_attr)
+    return Data(
+        x=z,
+        z=z,
+        pos=pos,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        edge_weight=edge_weight,
+        edge_shift=edge_shift,
+    )
 
 
 def read_csv(filename):
