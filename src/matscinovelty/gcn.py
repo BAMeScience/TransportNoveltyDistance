@@ -122,13 +122,11 @@ class EquivariantCrystalGCN(nn.Module):
 
             lat_feats = []
             for s in structures:
-                s_red = s.get_reduced_structure(reduction_algo="niggli")
-
-                a, b, c = s_red.lattice.a, s_red.lattice.b, s_red.lattice.c
+                a, b, c = s.lattice.a, s.lattice.b, s.lattice.c
                 alpha, beta, gamma = (
-                    s_red.lattice.alpha,
-                    s_red.lattice.beta,
-                    s_red.lattice.gamma,
+                    s.lattice.alpha,
+                    s.lattice.beta,
+                    s.lattice.gamma,
                 )
 
                 lat = np.array([a, b, c, alpha, beta, gamma], dtype=np.float32)
