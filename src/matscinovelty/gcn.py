@@ -49,7 +49,6 @@ class EGNNLayer(nn.Module):
             nn.SiLU(),
             nn.Linear(hidden_features, in_features),
         )
-        self.coord_mlp = nn.Sequential(nn.Linear(hidden_features, 1), nn.SiLU())
 
     def forward(
         self,
@@ -73,14 +72,7 @@ class EGNNLayer(nn.Module):
         agg.index_add_(0, row, m_ij)
         x = x + self.node_mlp(torch.cat([x, agg], dim=-1))
 
-        w_ij = self.coord_mlp(m_ij)
-        rij_norm = rij / (rij.norm(dim=-1, keepdim=True) + 1e-8)
-        trans = rij_norm * w_ij
-        delta = torch.zeros_like(pos)
-        delta.index_add_(0, row, trans)
-        pos = pos + delta
-
-        return x, pos
+        return x
 
 
 class EquivariantCrystalGCN(nn.Module):
@@ -108,49 +100,52 @@ class EquivariantCrystalGCN(nn.Module):
         edge_index, edge_attr = data.edge_index, data.edge_attr
 
         for layer in self.layers:
-            x, pos = layer(x, pos, edge_index, edge_attr)
+            x = layer(x, pos, edge_index, edge_attr)
 
         x = global_mean_pool(x, data.batch)
         return self.lin(F.relu(x))
 
-    def featurize(self, structures: Sequence) -> torch.Tensor:
-        """Convert pymatgen.Structure objects into normalized embeddings."""
-        device = next(self.parameters()).device
+    def featurize(self, structures):
+        """
+        Canonical featurizer:
+        - GNN processes the *original* structures
+        - Lattice features use primitive/Niggli-reduced structure
+        - Embeddings are concatenated
+        """
+        
         self.eval()
         with torch.no_grad():
-            graphs = [structure_to_graph(s, num_rbf=self.num_rbf) for s in structures]
-            batch = Batch.from_data_list(graphs).to(device)
-            z = F.normalize(self(batch), dim=1)
+            
+            # --- raw structures go to graph ---
+            graphs = [structure_to_graph(s) for s in structures]
+            batch = Batch.from_data_list(graphs).to(self.device)
+            z_graph = F.normalize(self(batch), dim=1)
 
+            # --- canonicalize for lattice-only features ---
+            reduced = [
+                s.get_primitive_structure().get_reduced_structure()
+                for s in structures
+            ]
+            
             lat_feats = []
-            for s in structures:
-                a, b, c = s.lattice.a, s.lattice.b, s.lattice.c
-                alpha, beta, gamma = (
-                    s.lattice.alpha,
-                    s.lattice.beta,
-                    s.lattice.gamma,
-                )
+            for s_red in reduced:
+                lat = s_red.lattice
+                vec = np.array([
+                    lat.a / self.lattice_scale_abc,
+                    lat.b / self.lattice_scale_abc,
+                    lat.c / self.lattice_scale_abc,
+                    lat.alpha / self.lattice_scale_angles,
+                    lat.beta / self.lattice_scale_angles,
+                    lat.gamma / self.lattice_scale_angles
+                ], dtype=np.float32)
+                lat_feats.append(vec)
+            
+            lat_feats = torch.tensor(lat_feats, device=z_graph.device)
 
-                lat = np.array([a, b, c, alpha, beta, gamma], dtype=np.float32)
-                lat /= np.array(
-                    [
-                        self.lattice_scale_abc,
-                        self.lattice_scale_abc,
-                        self.lattice_scale_abc,
-                        self.lattice_scale_angles,
-                        self.lattice_scale_angles,
-                        self.lattice_scale_angles,
-                    ],
-                    dtype=np.float32,
-                )
-                lat_feats.append(lat)
-
-            lat_feats = np.stack(lat_feats).astype(np.float32)
-            lat_feats = torch.from_numpy(lat_feats).to(device)
-            z = torch.cat([z, lat_feats], dim=1)
+            # final invariant embedding
+            z = torch.cat([z_graph, lat_feats], dim=1)
 
         return z.cpu()
-
 
 class CGCNNEncoder(nn.Module):
     """CGCNN-style encoder using CGConv layers for fast embedding extraction."""
