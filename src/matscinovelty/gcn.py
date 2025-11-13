@@ -157,6 +157,7 @@ class CGCNNEncoder(nn.Module):
         self, hidden_dim: int = 128, num_rbf: int = 32, num_layers: int = 3
     ) -> None:
         super().__init__()
+        self.num_rbf = num_rbf
         if num_layers < 1:
             raise ValueError("CGCNNEncoder requires at least one convolutional layer.")
         self.emb = nn.Embedding(100, hidden_dim)
@@ -174,6 +175,19 @@ class CGCNNEncoder(nn.Module):
 
         x = global_mean_pool(x, data.batch)
         return self.lin(x)
+
+    @torch.no_grad()
+    def featurize(self, structures: Sequence, device: str | torch.device | None = None):
+        device = (
+            torch.device(device)
+            if device is not None
+            else next(self.parameters()).device
+        )
+        self.eval()
+        graphs = [structure_to_graph(s, num_rbf=self.num_rbf) for s in structures]
+        batch = Batch.from_data_list(graphs).to(device)
+        embeddings = F.normalize(self(batch), dim=1)
+        return embeddings.detach().cpu()
 
 
 class SchNetEncoder(nn.Module):
