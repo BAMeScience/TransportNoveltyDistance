@@ -18,20 +18,28 @@ pass ``--skip-step-json`` or ``--step-limit`` for quicker debugging runs.
 from __future__ import annotations
 
 import argparse
+import gzip
 import io
 import json
+import os
 from collections import defaultdict
 from pathlib import Path
 from zipfile import ZipFile
 
 import ase.io
 import pandas as pd
-from matbench_discovery.data import DataFiles
 from pymatgen.io.ase import AseAtomsAdaptor
 from tqdm.auto import tqdm
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CACHE_DIR = PROJECT_ROOT / "data" / ".matbench_cache"
+os.environ.setdefault("MATBENCH_DISCOVERY_CACHE_DIR", str(CACHE_DIR))
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+from matbench_discovery.data import DataFiles
+
 DEFAULT_DEST = PROJECT_ROOT / "data" / "wbm"
+MP20_DIR = PROJECT_ROOT / "data" / "mp_20"
 
 
 def _copy_summary(dest_dir: Path) -> pd.DataFrame:
@@ -55,6 +63,19 @@ def _copy_atoms(dest_dir: Path) -> None:
     print(f"✔ Copied ASE atoms archive to {out_path}")
 
 
+def _load_mp20_ids(mp20_dir: Path) -> set[str]:
+    ids: set[str] = set()
+    for split in ("train.csv", "val.csv", "test.csv"):
+        path = mp20_dir / split
+        if not path.exists():
+            continue
+        df = pd.read_csv(path)
+        if "material_id" not in df.columns:
+            continue
+        ids.update(df["material_id"].dropna().astype(str))
+    return ids
+
+
 def _copy_step_structures(
     dest_dir: Path, summary_df: pd.DataFrame, *, limit: int | None = None
 ) -> None:
@@ -70,11 +91,6 @@ def _copy_step_structures(
         Optional maximum number of relaxed structures to export per step. Helpful
         for smoke tests; ``None`` means “use the full dataset”.
     """
-
-    step_col = "wyckoff_spglib"
-    if step_col not in summary_df.columns:
-        print("⚠ Summary file missing 'wyckoff_spglib'; skipping per-step JSON.")
-        return
 
     adaptor = AseAtomsAdaptor()
     steps = pd.to_numeric(
@@ -129,6 +145,60 @@ def _copy_step_structures(
         if limit is not None:
             msg += f" (limit={limit})"
         print(msg)
+
+    mp_ids = _load_mp20_ids(MP20_DIR)
+    _copy_mp20_baseline(dest_dir, mp_ids, limit=limit)
+
+
+def _copy_mp20_baseline(
+    dest_dir: Path, mp_ids: set[str], limit: int | None = None
+) -> None:
+    """Emit step-0 JSON by extracting MP-20 structures from the MP entries file."""
+
+    if not mp_ids:
+        print("⚠ No MP-20 CSVs found; skipping step-0 export.")
+        return
+
+    mp_path = Path(DataFiles.mp_computed_structure_entries.path)
+    dest_file = dest_dir / "wbm-structures-step-0.json"
+    count = 0
+
+    dest_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(dest_file, "w") as out:
+        out.write("{")
+        first = True
+        try:
+            with gzip.open(mp_path, "rt") as fh:
+                payload = json.load(fh)
+        except Exception as exc:
+            print(f"⚠ Failed to load MP computed structure entries: {exc}")
+            out.write("\n}\n")
+            return
+
+        material_map: dict[str, str] = payload.get("material_id", {})
+        entries: dict[str, dict] = payload.get("entry", {})
+
+        for key, entry_id in material_map.items():
+            entry_id = str(entry_id)
+            if entry_id not in mp_ids:
+                continue
+            entry = entries.get(key) or {}
+            structure = entry.get("structure")
+            if structure is None:
+                continue
+            if limit is not None and count >= limit:
+                break
+            if not first:
+                out.write(",")
+            first = False
+            out.write(f'\n  "{entry_id}": ')
+            json.dump(structure, out)
+            count += 1
+        if not first:
+            out.write("\n")
+        out.write("}\n")
+
+    print(f"✔ Wrote {count} baseline MP-20 structures -> {dest_file}")
 
 
 def parse_args() -> argparse.Namespace:

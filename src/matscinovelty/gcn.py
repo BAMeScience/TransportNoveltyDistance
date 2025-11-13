@@ -92,10 +92,12 @@ class EquivariantCrystalGCN(nn.Module):
         super().__init__()
         self.num_rbf = num_rbf
         self.emb = nn.Embedding(100, hidden_dim)
-        self.layers = nn.ModuleList([
-            EGNNLayer(hidden_dim, hidden_dim, edge_features=num_rbf)
-            for _ in range(n_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                EGNNLayer(hidden_dim, hidden_dim, edge_features=num_rbf)
+                for _ in range(n_layers)
+            ]
+        )
         self.lin = nn.Linear(hidden_dim, hidden_dim)
         self.lattice_scale_abc = 10.0
         self.lattice_scale_angles = 180.0

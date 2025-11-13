@@ -76,20 +76,30 @@ def load_structures_for_step(step):
     subset = stable[stable["step"] == step]
 
     structs = []
-    for mid in subset["material_id"]:
-        entry = data.get(str(mid))
-        if entry is None:
-            continue
-        struct_dict = (
-            entry["opt"] if isinstance(entry, dict) and "opt" in entry else entry
-        )
-        structs.append(Structure.from_dict(struct_dict))
+    if subset.empty and step == 0:
+        for entry in data.values():
+            struct_dict = (
+                entry["opt"] if isinstance(entry, dict) and "opt" in entry else entry
+            )
+            structs.append(Structure.from_dict(struct_dict))
+    else:
+        for mid in subset["material_id"]:
+            entry = data.get(str(mid))
+            if entry is None:
+                continue
+            struct_dict = (
+                entry["opt"] if isinstance(entry, dict) and "opt" in entry else entry
+            )
+            structs.append(Structure.from_dict(struct_dict))
 
     print(f"Loaded {len(structs)} structures for WBM step {step}")
     return structs
 
 
+# treat MP-20 baseline as "step 0"
+baseline_structs = str_train
 wbm_steps = [load_structures_for_step(i) for i in range(1, 6)]
+all_steps = [baseline_structs] + wbm_steps
 
 # ===========================================================
 # 2️⃣ Initialize Scorer
@@ -118,14 +128,18 @@ print(f"Estimated τ = {scorer.tau:.4f}")
 # 3️⃣ Evaluate WBM Steps
 # ===========================================================
 scores_total, scores_quality, scores_mem = [], [], []
-max_len = min(len(s) for s in wbm_steps)  # or set manually, e.g. max_len = 1000
+max_len = min(len(s) for s in all_steps[1:])  # WBM steps only; baseline can be larger
 
-for step_idx, step_structs in enumerate(wbm_steps, start=1):
-    print(f"\n▶ Evaluating WBM step {step_idx}")
+for step_idx, step_structs in enumerate(all_steps):
+    label = (
+        "0 (MP-20 baseline)" if step_idx == 0 else f"{step_idx} (WBM step {step_idx})"
+    )
+    print(f"\n▶ Evaluating {label}")
 
     # ✅ sample same number of materials each step
-    if len(step_structs) > max_len:
-        step_subset = random.sample(step_structs, max_len)
+    cap = max_len if step_idx > 0 else len(step_structs)
+    if len(step_structs) > cap:
+        step_subset = random.sample(step_structs, cap)
     else:
         step_subset = step_structs
 
@@ -140,13 +154,13 @@ for step_idx, step_structs in enumerate(wbm_steps, start=1):
 # ===========================================================
 # 4️⃣ Plot Results
 # ===========================================================
-steps = range(1, len(scores_total) + 1)
+steps = range(len(scores_total))
 plt.figure(figsize=(8, 5))
 plt.rcParams.update({"font.size": 14})
 plt.plot(steps, scores_total, marker="o", label="Total Loss", linewidth=2)
 plt.plot(steps, scores_quality, marker="s", label="Quality Component", linestyle="--")
 plt.plot(steps, scores_mem, marker="^", label="Memorization Component", linestyle=":")
-plt.xlabel("WBM Step")
+plt.xlabel("Step (0 = MP-20 baseline)")
 plt.ylabel("Novelty Loss")
 plt.title("Novelty Loss Components vs. WBM Step")
 plt.grid(True, alpha=0.4)
