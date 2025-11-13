@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional, Sequence
 
+import numpy as np
 import ot
 import torch
 
@@ -286,5 +287,124 @@ class OTNoveltyScorer:
 
         print(
             f"Quality={qual_comp:.4f}, Memorization={mem_comp:.4f}, Total={total:.4f}"
+        )
+        return total.item(), qual_comp.item(), mem_comp.item()
+
+
+class EnergyAwareOTNoveltyScorer(OTNoveltyScorer):
+    """
+    OT-based novelty scorer that evaluates quality via a fast energy surrogate
+    (e.g., MACE). Structures far from the training manifold are not immediately
+    penalized; instead, the model predicts an energy-above-hull value and only
+    applies a penalty when that value exceeds ``energy_threshold_ev``.
+    """
+
+    def __init__(
+        self,
+        train_structures: Sequence,
+        *,
+        energy_threshold_ev: float = 0.05,
+        energy_weight: float = 1.0,
+        mace_model_kwargs: Optional[dict] = None,
+        energy_predictor: Optional[Callable[[Sequence], np.ndarray]] = None,
+        device: str | torch.device | None = None,
+        **kwargs,
+    ) -> None:
+        """
+        Parameters
+        ----------
+        train_structures
+            Reference structures used to anchor novelty evaluation.
+        energy_threshold_ev
+            Maximum allowed (predicted) energy above hull in eV/atom before a
+            penalty is applied.
+        energy_weight
+            Scalar multiplier on the energy penalty relative to the OT
+            memorization term.
+        mace_model_kwargs
+            Extra keyword arguments forwarded to :func:`mace.calculators.mace_mp`
+            when the default MACE predictor is used.
+        energy_predictor
+            Optional callable ``f(structures) -> np.ndarray`` returning energies
+            in eV/atom. Providing this bypasses the internal MACE loading logic
+            and makes unit testing simpler.
+        device
+            Torch device used for the embedding model. The energy surrogate
+            follows suit.
+        kwargs
+            Forwarded to :class:`OTNoveltyScorer`.
+        """
+        super().__init__(train_structures, device=device, **kwargs)
+        self.energy_threshold = energy_threshold_ev
+        self.energy_weight = energy_weight
+        self.energy_device = (
+            torch.device(device)
+            if device is not None
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
+
+        self._train_energy_mean = None
+        if energy_predictor is not None:
+            self._energy_predictor = energy_predictor
+            self.mace = None
+        else:
+            self.mace = None
+            try:
+                from mace.calculators import mace_mp
+            except ImportError as exc:  # pragma: no cover
+                raise ImportError(
+                    "EnergyAwareOTNoveltyScorer requires the 'mace' package or a custom energy_predictor. "
+                    "Install it via `pip install mace-torch` or pass `energy_predictor` explicitly."
+                ) from exc
+
+            model_kwargs = mace_model_kwargs or {}
+            self.mace = mace_mp(device=str(self.energy_device), **model_kwargs)
+            self._energy_predictor = self._predict_with_mace
+            print("Loaded MACE energy surrogate for novelty scoring.")
+
+    def _predict_with_mace(self, structures: Sequence) -> np.ndarray:
+        energies = []
+        for struct in structures:
+            energies.append(self.mace.get_potential_energy(struct))
+        return np.asarray(energies, dtype=float)
+
+    def _predict_e_above_hull(self, structures: Sequence) -> np.ndarray:
+        energies = np.asarray(self._energy_predictor(structures), dtype=float)
+        reference = self._train_energy_mean
+        if reference is None:
+            ref_structs = self.train_structs[: min(len(self.train_structs), 100)]
+            reference = float(np.mean(self._energy_predictor(ref_structs)))
+            self._train_energy_mean = reference
+        return energies - reference
+
+    def compute_novelty(self, gen_structures: Sequence):
+        r"""
+        Evaluate the energy-aware novelty loss
+
+        .. math::
+            \mathcal{L} = \sum_{i,j} P_{ij} \max(0, e_j - e_{\text{thr}})
+            + \lambda \sum_{i,j} P_{ij} \max(0, \tau - C_{ij}),
+
+        where :math:`e_j` is the predicted energy-above-hull for generated
+        sample :math:`j`, :math:`e_{\text{thr}}` the allowed threshold,
+        :math:`P` the OT plan, :math:`C` the embedding distances, and
+        :math:`\lambda` the memorization weight.
+        """
+        gen_feats = self.featurizer(gen_structures).to(self.device)
+        P, C = self._get_ot_plan(self.train_feats, gen_feats)
+
+        e_above = self._predict_e_above_hull(gen_structures)
+        # Align energy array to OT columns
+        e_tensor = torch.tensor(e_above, device=self.device, dtype=C.dtype)
+
+        mem_cost = torch.relu(self.tau - C)
+        mem_comp = torch.sum(P * mem_cost) * self.m_weight
+
+        energy_penalty = torch.relu(e_tensor - self.energy_threshold)
+        qual_comp = torch.sum(P * energy_penalty) * self.energy_weight
+
+        total = qual_comp + mem_comp
+        print(
+            f"Energy penalty={qual_comp:.4f}, Memorization={mem_comp:.4f}, Total={total:.4f}"
         )
         return total.item(), qual_comp.item(), mem_comp.item()

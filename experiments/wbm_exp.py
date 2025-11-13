@@ -9,7 +9,7 @@ import torch
 from pymatgen.core import Structure
 
 from matscinovelty import (
-    EquivariantCrystalGCN,
+    CGCNNEncoder,
     OTNoveltyScorer,
     read_structure_from_csv,
 )
@@ -120,7 +120,7 @@ checkpoint_path = args.checkpoint
 if not checkpoint_path.exists():
     raise SystemExit(f"Checkpoint not found at {checkpoint_path}.")
 
-model = EquivariantCrystalGCN(hidden_dim=128).to(device)
+model = CGCNNEncoder(hidden_dim=128).to(device)
 model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 print(f"Loaded weights from {checkpoint_path.name} ✅")
 
