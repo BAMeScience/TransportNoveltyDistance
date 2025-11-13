@@ -46,7 +46,15 @@ Make sure these files are present in the working directory before running the ex
     python scripts/train_mp20.py --epochs 10 --checkpoint-path checkpoints/gcn_mp20.pt
     ```
 
-    The training script is a thin wrapper around `train_contrastive_model`, so you can adjust hyperparameters and file paths through its CLI flags. Use `--model {equivariant,cgc,schnet}` to pick the backbone, and pass `--accelerate` (after `pip install accelerate` or `pip install -e .[train]`) to launch via Hugging Face Accelerate for multi-GPU/distributed runs.
+    The training script is a thin wrapper around `train_contrastive_model`, so you can adjust hyperparameters and file paths through its CLI flags. Pass `--accelerate` (after `pip install accelerate` or `pip install -e .[train]`) to launch via Hugging Face Accelerate for multi-GPU/distributed runs.
+
+3. (Optional) Split the MP-20 CSVs into oxide/non-oxide subsets:
+
+    ```bash
+    python scripts/split_mp20_oxides.py --inputs data/mp_20/train.csv data/mp_20/val.csv
+    ```
+
+    The script uses pymatgen's `BVAnalyzer` to classify each structure and writes `_oxides` / `_non_oxides` CSVs alongside the originals.
 
 ### Download xtalmet model outputs (MatterGen, DiffCSP, …)
 

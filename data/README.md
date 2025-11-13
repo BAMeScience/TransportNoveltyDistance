@@ -16,6 +16,14 @@ python scripts/train_mp20.py --epochs 10 --checkpoint-path checkpoints/gcn_mp20.
 
 `train_mp20.py` is a CLI wrapper around `train_contrastive_model`; tweak hyperparameters and artifact paths through its flags. The script will exit early with a helpful message if the train/val CSVs are missing, so always run the download step (or supply your own CSV paths) first. Add `--accelerate` (after `pip install accelerate` or `pip install -e .[train]`) to launch via Hugging Face Accelerate for multi-device/distributed runs.
 
+Need oxide-specific splits? Run:
+
+```bash
+python scripts/split_mp20_oxides.py --inputs data/mp_20/train.csv data/mp_20/val.csv
+```
+
+which writes `_oxides` / `_non_oxides` CSVs in the same directory using pymatgen's bond-valence analyzer.
+
 ## xtalmet model outputs
 
 The novelty benchmarks in `experiments/model_eval.py` rely on pickled structure lists from the xtalmet dataset. To fetch them:
