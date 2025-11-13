@@ -36,7 +36,7 @@ CACHE_DIR = PROJECT_ROOT / "data" / ".matbench_cache"
 os.environ.setdefault("MATBENCH_DISCOVERY_CACHE_DIR", str(CACHE_DIR))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-from matbench_discovery.data import DataFiles
+from matbench_discovery.data import DataFiles  # noqa: E402
 
 DEFAULT_DEST = PROJECT_ROOT / "data" / "wbm"
 MP20_DIR = PROJECT_ROOT / "data" / "mp_20"
@@ -63,8 +63,9 @@ def _copy_atoms(dest_dir: Path) -> None:
     print(f"✔ Copied ASE atoms archive to {out_path}")
 
 
-def _load_mp20_ids(mp20_dir: Path) -> set[str]:
+def _load_mp20_ids(mp20_dir: Path) -> tuple[set[str], dict[str, float]]:
     ids: set[str] = set()
+    hulls: dict[str, float] = {}
     for split in ("train.csv", "val.csv", "test.csv"):
         path = mp20_dir / split
         if not path.exists():
@@ -72,8 +73,14 @@ def _load_mp20_ids(mp20_dir: Path) -> set[str]:
         df = pd.read_csv(path)
         if "material_id" not in df.columns:
             continue
-        ids.update(df["material_id"].dropna().astype(str))
-    return ids
+        mat_ids = df["material_id"].dropna().astype(str).str.split(".").str[0]
+        ids.update(mat_ids)
+        if "e_above_hull" in df.columns:
+            hull_values = pd.to_numeric(df["e_above_hull"], errors="coerce")
+            for mid, hull in zip(mat_ids, hull_values):
+                if pd.notna(hull):
+                    hulls[mid] = float(hull)
+    return ids, hulls
 
 
 def _copy_step_structures(
@@ -92,22 +99,38 @@ def _copy_step_structures(
         for smoke tests; ``None`` means “use the full dataset”.
     """
 
+    stability_col = "e_above_hull_mp2020_corrected_ppd_mp"
+    stability_mask = (
+        summary_df.get(stability_col, pd.Series([float("inf")])).fillna(float("inf"))
+        <= 0
+    )
+    stable_ids = set(summary_df.loc[stability_mask, "material_id"].astype(str))
+
     adaptor = AseAtomsAdaptor()
     steps = pd.to_numeric(
         summary_df["material_id"].str.split("-").str[1], errors="coerce"
     )
     step_lookup = dict(zip(summary_df["material_id"], steps))
 
-    writers: dict[int, tuple[Path, any]] = {}
-    first_entry: dict[int, bool] = {}
-    counts = defaultdict(int)
+    writers_all: dict[int, tuple[Path, any]] = {}
+    writers_stable: dict[int, tuple[Path, any]] = {}
+    first_all: dict[int, bool] = {}
+    first_stable: dict[int, bool] = {}
+    counts_all = defaultdict(int)
+    counts_stable = defaultdict(int)
 
     for step in range(1, 6):
         dest_file = dest_dir / f"wbm-structures-step-{step}.json"
         fh = open(dest_file, "w")
-        fh.write("{")  # stream JSON object manually to avoid holding everything in RAM
-        writers[step] = (dest_file, fh)
-        first_entry[step] = True
+        fh.write("{")
+        writers_all[step] = (dest_file, fh)
+        first_all[step] = True
+
+        stable_file = dest_dir / f"wbm-structures-step-{step}-stable.json"
+        fh_stable = open(stable_file, "w")
+        fh_stable.write("{")
+        writers_stable[step] = (stable_file, fh_stable)
+        first_stable[step] = True
 
     relaxed_zip = DataFiles.wbm_relaxed_atoms.path
     with ZipFile(relaxed_zip) as zf:
@@ -115,9 +138,9 @@ def _copy_step_structures(
         for name in tqdm(names, desc="Converting relaxed structures"):
             mat_id = Path(name).stem
             step = step_lookup.get(mat_id)
-            if step is None or step not in writers:
+            if step is None or step not in writers_all:
                 continue
-            if limit is not None and counts[step] >= limit:
+            if limit is not None and counts_all[step] >= limit:
                 continue
 
             with zf.open(name) as fh:
@@ -126,32 +149,48 @@ def _copy_step_structures(
                 )
             structure = adaptor.get_structure(atoms)
 
-            _, fh_out = writers[step]
-            if not first_entry[step]:
+            _, fh_out = writers_all[step]
+            if not first_all[step]:
                 fh_out.write(",")
-            first_entry[step] = False
+            first_all[step] = False
             fh_out.write(f'\n  "{mat_id}": ')
             json.dump({"opt": structure.as_dict()}, fh_out)
-            counts[step] += 1
+            counts_all[step] += 1
 
-    for step, (dest_file, fh) in writers.items():
-        if not first_entry[step]:
+            if mat_id in stable_ids:
+                _, fh_stable = writers_stable[step]
+                if not first_stable[step]:
+                    fh_stable.write(",")
+                first_stable[step] = False
+                fh_stable.write(f'\n  "{mat_id}": ')
+                json.dump({"opt": structure.as_dict()}, fh_stable)
+                counts_stable[step] += 1
+
+    for step, (dest_file, fh) in writers_all.items():
+        if not first_all[step]:
             fh.write("\n")
         fh.write("}\n")
         fh.close()
-        msg = (
-            f"✔ Wrote {counts[step]} relaxed structures for step {step} -> {dest_file}"
-        )
+        msg = f"✔ Wrote {counts_all[step]} relaxed structures for step {step} -> {dest_file}"
         if limit is not None:
             msg += f" (limit={limit})"
         print(msg)
 
-    mp_ids = _load_mp20_ids(MP20_DIR)
-    _copy_mp20_baseline(dest_dir, mp_ids, limit=limit)
+    for step, (dest_file, fh) in writers_stable.items():
+        if not first_stable[step]:
+            fh.write("\n")
+        fh.write("}\n")
+        fh.close()
+        print(
+            f"✔ Wrote {counts_stable[step]} stable structures for step {step} -> {dest_file}"
+        )
+
+    mp_ids, mp_hulls = _load_mp20_ids(MP20_DIR)
+    _copy_mp20_baseline(dest_dir, mp_ids, mp_hulls, limit=limit)
 
 
 def _copy_mp20_baseline(
-    dest_dir: Path, mp_ids: set[str], limit: int | None = None
+    dest_dir: Path, mp_ids: set[str], mp_hulls: dict[str, float], limit: int | None = None
 ) -> None:
     """Emit step-0 JSON by extracting MP-20 structures from the MP entries file."""
 
@@ -161,12 +200,16 @@ def _copy_mp20_baseline(
 
     mp_path = Path(DataFiles.mp_computed_structure_entries.path)
     dest_file = dest_dir / "wbm-structures-step-0.json"
+    stable_file = dest_dir / "wbm-structures-step-0-stable.json"
     count = 0
+    stable_count = 0
 
     dest_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(dest_file, "w") as out:
+    with open(dest_file, "w") as out, open(stable_file, "w") as out_stable:
         out.write("{")
         first = True
+        out_stable.write("{")
+        first_stable = True
         try:
             with gzip.open(mp_path, "rt") as fh:
                 payload = json.load(fh)
@@ -179,7 +222,7 @@ def _copy_mp20_baseline(
         entries: dict[str, dict] = payload.get("entry", {})
 
         for key, entry_id in material_map.items():
-            entry_id = str(entry_id)
+            entry_id = str(entry_id).split(".")[0]
             if entry_id not in mp_ids:
                 continue
             entry = entries.get(key) or {}
@@ -194,11 +237,36 @@ def _copy_mp20_baseline(
             out.write(f'\n  "{entry_id}": ')
             json.dump(structure, out)
             count += 1
+
+            e_hull_value = mp_hulls.get(entry_id)
+            if e_hull_value is None:
+                data_field = entry.get("data") or {}
+                e_hull = data_field.get("e_above_hull") or data_field.get(
+                    "e_above_hull_mp"
+                )
+                if e_hull is None and isinstance(entry.get("parameters"), dict):
+                    e_hull = entry["parameters"].get("e_above_hull")
+                try:
+                    e_hull_value = float(e_hull)
+                except (TypeError, ValueError):
+                    e_hull_value = float("inf")
+
+            if e_hull_value <= 0:
+                if not first_stable:
+                    out_stable.write(",")
+                first_stable = False
+                out_stable.write(f'\n  "{entry_id}": ')
+                json.dump(structure, out_stable)
+                stable_count += 1
         if not first:
             out.write("\n")
         out.write("}\n")
+        if not first_stable:
+            out_stable.write("\n")
+        out_stable.write("}\n")
 
     print(f"✔ Wrote {count} baseline MP-20 structures -> {dest_file}")
+    print(f"✔ Wrote {stable_count} stable baseline MP-20 structures -> {stable_file}")
 
 
 def parse_args() -> argparse.Namespace:
