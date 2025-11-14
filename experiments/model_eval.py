@@ -9,6 +9,8 @@ import torch
 
 from matscinovelty import (
     EquivariantCrystalGCN,
+    CGCNNEncoder,
+    SchNetEncoder,
     OTNoveltyScorer,
     canonicalize_structure,
     coverage_score,
@@ -78,6 +80,59 @@ def _infer_gcn_config(state_dict: OrderedDict) -> tuple[int, int, int]:
     return hidden_dim, num_rbf, n_layers
 
 
+def _infer_cgc_config(state_dict: OrderedDict) -> tuple[int, int, int]:
+    """Infer hidden_dim, num_rbf, and n_layers from a checkpoint."""
+    try:
+        hidden_dim = state_dict["emb.weight"].shape[1]
+    except KeyError as exc:
+        raise KeyError(
+            "Checkpoint missing 'emb.weight'; cannot infer hidden_dim."
+        ) from exc
+
+    edge_key = 'convs.1.lin_f.weight'
+    if edge_key not in state_dict:
+        raise KeyError(f"Checkpoint missing '{edge_key}'; cannot infer num_rbf.")
+    num_rbf = state_dict[edge_key].shape[1] - (2 * hidden_dim)
+    if num_rbf < 0:
+        raise ValueError("Inferred num_rbf was negative; checkpoint/config mismatch.")
+
+    layer_ids = set()
+    for key in state_dict.keys():
+        if key.startswith("convs."):
+            parts = key.split(".")
+            if len(parts) > 1 and parts[1].isdigit():
+                layer_ids.add(int(parts[1]))
+    n_layers = max(layer_ids) + 1 if layer_ids else 1
+    return hidden_dim, num_rbf, n_layers
+
+
+
+def _infer_schnet_config(state_dict: OrderedDict) -> tuple[int, int, int]:
+    """Infer hidden_dim, num_rbf, and n_layers from a checkpoint."""
+    try:
+        hidden_dim = state_dict["embedding.weight"].shape[1]
+    except KeyError as exc:
+        raise KeyError(
+            "Checkpoint missing 'emb.weight'; cannot infer hidden_dim."
+        ) from exc
+
+    edge_key = "interactions.0.mlp.0.weight"
+    if edge_key not in state_dict:
+        raise KeyError(f"Checkpoint missing '{edge_key}'; cannot infer num_rbf.")
+    num_rbf = state_dict[edge_key].shape[1]
+    if num_rbf < 0:
+        raise ValueError("Inferred num_rbf was negative; checkpoint/config mismatch.")
+
+    layer_ids = set()
+    for key in state_dict.keys():
+        if key.startswith("interactions."):
+            parts = key.split(".")
+            if len(parts) > 1 and parts[1].isdigit():
+                layer_ids.add(int(parts[1]))
+    n_layers = max(layer_ids) + 1 if layer_ids else 1
+    return hidden_dim, hidden_dim, num_rbf, n_layers
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_MP20 = PROJECT_ROOT / "data" / "mp_20"
 DATA_MODELS = PROJECT_ROOT / "data_models"
@@ -90,6 +145,12 @@ IMGS_DIR.mkdir(exist_ok=True)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Evaluate generative models with OT novelty."
+    )
+    parser.add_argument(
+        "--model",
+        choices=("equivariant", "cgc", "schnet"),
+        default="equivariant",
+        help="Trained backbone architecture.",
     )
     parser.add_argument(
         "--checkpoint",
@@ -166,24 +227,52 @@ if not checkpoint_path.exists():
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Loading pretrained GCN model...")
 
-raw_checkpoint = torch.load(checkpoint_path, map_location=device)
-state_dict = _prepare_state_dict(_extract_state_dict(raw_checkpoint))
-hidden_dim, num_rbf, n_layers = _infer_gcn_config(state_dict)
-print(
-    f"Checkpoint config detected -> hidden_dim={hidden_dim}, num_rbf={num_rbf}, n_layers={n_layers}"
-)
-model = EquivariantCrystalGCN(
-    hidden_dim=hidden_dim, num_rbf=num_rbf, n_layers=n_layers
-).to(device)
-model.load_state_dict(state_dict)
-print("Loaded weights from gcn_fine.pt ✅")
+def recreate_model():
+    if args.model == "equivariant":
+        raw_checkpoint = torch.load(checkpoint_path, map_location=device)
+        state_dict = _prepare_state_dict(_extract_state_dict(raw_checkpoint))
+        hidden_dim, num_rbf, n_layers = _infer_gcn_config(state_dict)
+        print(f"Checkpoint config detected -> hidden_dim={hidden_dim}, num_rbf={num_rbf}, n_layers={n_layers}")
 
+        model = EquivariantCrystalGCN(
+            hidden_dim=hidden_dim, num_rbf=num_rbf, n_layers=n_layers
+        ).to(device)
+        model.load_state_dict(state_dict)
+        print(f"Loaded weights from {checkpoint_path} ✅")
+        return model
+    if args.model == "cgc":
+        raw_checkpoint = torch.load(checkpoint_path, map_location=device)
+        state_dict = _prepare_state_dict(_extract_state_dict(raw_checkpoint))
+        hidden_dim, num_rbf, n_layers = _infer_cgc_config(state_dict)
+        print(f"Checkpoint config detected -> hidden_dim={hidden_dim}, num_rbf={num_rbf}, n_layers={n_layers}")
+
+        model = CGCNNEncoder(
+            hidden_dim=hidden_dim, num_rbf=num_rbf, num_layers=n_layers
+        ).to(device)
+        model.load_state_dict(state_dict)
+        print(f"Loaded weights from {checkpoint_path} ✅")
+        return model
+    if args.model == "schnet":
+        raw_checkpoint = torch.load(checkpoint_path, map_location=device)
+        state_dict = _prepare_state_dict(_extract_state_dict(raw_checkpoint))
+        embedding_dim, hidden_channels, num_gaussians, n_layers = _infer_schnet_config(state_dict)
+        print(f"Checkpoint config detected -> hidden_dim={hidden_dim}, num_rbf={num_rbf}, n_layers={n_layers}")
+
+        model = SchNetEncoder(
+            embedding_dim=embedding_dim, hidden_channels=hidden_channels, num_gaussians=num_gaussians, num_interactions=n_layers
+        ).to(device)
+        model.load_state_dict(state_dict)
+        print(f"Loaded weights from {checkpoint_path} ✅")
+        return model
+    raise ValueError(f"Unknown model type: {args.model}")
+
+model = recreate_model()
 
 scorer = OTNoveltyScorer(
     train_structures=str_train,
     gnn_model=model,
-    tau=0.36,  # fixed τ (your calibrated value)
-    memorization_weight=50.0,
+    tau=None,  # fixed τ (your calibrated value)
+    memorization_weight=None,
     device=device,
 )
 
@@ -222,7 +311,7 @@ plt.ylabel("Loss")
 plt.xticks(rotation=30, ha="right")
 plt.grid(True, axis="y", alpha=0.3)
 plt.tight_layout()
-plt.savefig(IMGS_DIR / "novelty_comparison_total.png", dpi=300)
+plt.savefig(IMGS_DIR / "novelty_comparison_total_cgc.png", dpi=300)
 plt.show()
 
 # 2️⃣ Quality Component
@@ -233,7 +322,7 @@ plt.ylabel("Loss")
 plt.xticks(rotation=30, ha="right")
 plt.grid(True, axis="y", alpha=0.3)
 plt.tight_layout()
-plt.savefig(IMGS_DIR / "novelty_comparison_quality.png", dpi=300)
+plt.savefig(IMGS_DIR / "novelty_comparison_quality_cgc.png", dpi=300)
 plt.show()
 
 # 3️⃣ Memorization Component
@@ -244,7 +333,7 @@ plt.ylabel("Loss")
 plt.xticks(rotation=30, ha="right")
 plt.grid(True, axis="y", alpha=0.3)
 plt.tight_layout()
-plt.savefig(IMGS_DIR / "novelty_comparison_memorization.png", dpi=300)
+plt.savefig(IMGS_DIR / "novelty_comparison_memorization_cgc.png", dpi=300)
 plt.show()
 
 # 4️⃣ Novelty vs Coverage (added metric visualization)
@@ -258,5 +347,5 @@ plt.title("GNN Feature Space Novelty & Coverage", fontsize=14, fontweight="bold"
 plt.grid(True, axis="y", alpha=0.3)
 plt.legend()
 plt.tight_layout()
-plt.savefig(IMGS_DIR / "novelty_coverage_comparison.png", dpi=300)
+plt.savefig(IMGS_DIR / "novelty_coverage_comparison_cgc.png", dpi=300)
 plt.show()
