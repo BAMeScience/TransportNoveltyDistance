@@ -276,12 +276,6 @@ def recreate_model():
 
 model = recreate_model()
 
-'''
-model = EquivariantCrystalGCN(hidden_dim=128, num_rbf = 32, n_layers = 3).to(device)
-model.load_state_dict(torch.load(checkpoint_path, map_location=device))
-print(f"Loaded weights from {checkpoint_path.name} ✅")
-'''
-
 scorer = OTNoveltyScorer(
     train_structures=str_train,
     gnn_model=model,
