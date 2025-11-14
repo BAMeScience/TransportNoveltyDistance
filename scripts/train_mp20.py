@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from matscinovelty import CGCNNEncoder, SchNetEncoder
+from matscinovelty import CGCNNEncoder, SchNetEncoder, EquivariantCrystalGCN
 from matscinovelty.gcn import train_contrastive_model
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -120,7 +120,11 @@ def main() -> None:
 
     def make_model_builder():
         if args.model == "equivariant":
-            return None
+            return lambda: EquivariantCrystalGCN(
+                hidden_dim=args.hidden_dim,
+                num_rbf=args.num_rbf,
+                n_layers=args.n_layers,
+            )
         if args.model == "cgc":
             return lambda: CGCNNEncoder(
                 hidden_dim=args.hidden_dim,

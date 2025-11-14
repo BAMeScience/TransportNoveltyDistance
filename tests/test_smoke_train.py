@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Pytest smoke test for the contrastive training loop.
 
@@ -8,12 +6,21 @@ still exercising the end-to-end pipeline (CSV I/O, dataloaders, model, loss,
 checkpointing, and plotting).
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from pymatgen.core import Lattice, Structure
+from torch_geometric.typing import WITH_TORCH_CLUSTER
 
-from matscinovelty.gcn import train_contrastive_model
+from matscinovelty.gcn import (
+    CGCNNEncoder,
+    EquivariantCrystalGCN,
+    SchNetEncoder,
+    train_contrastive_model,
+)
 
 
 def _build_structures() -> list[Structure]:
@@ -67,3 +74,21 @@ def test_smoke_contrastive_training(tmp_path: Path) -> None:
 
     assert checkpoint.exists(), "Smoke checkpoint missing"
     assert curve.exists(), "Validation curve plot missing"
+
+
+def test_featurizers_run() -> None:
+    """Ensure every encoder's featurize method executes without errors."""
+    structs = _build_structures()
+    encoders = [
+        EquivariantCrystalGCN(hidden_dim=32, num_rbf=8),
+        CGCNNEncoder(hidden_dim=32, num_rbf=8, num_layers=2),
+    ]
+    if WITH_TORCH_CLUSTER:
+        encoders.append(
+            SchNetEncoder(embedding_dim=32, hidden_channels=32, num_filters=32)
+        )
+    else:  # pragma: no cover - optional dependency
+        pytest.skip("torch-cluster missing; skipping SchNet featurizer check")
+    for enc in encoders:
+        enc.eval()
+        _ = enc.featurize(structs)

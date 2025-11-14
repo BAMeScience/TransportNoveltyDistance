@@ -10,7 +10,7 @@ warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
-from .gcn import (
+from .gcn import (  # noqa: E402
     CGCNNEncoder,
     EGNNLayer,
     EquivariantCrystalGCN,
@@ -19,7 +19,7 @@ from .gcn import (
     train_contrastive_model,
     validate,
 )
-from .utils import (
+from .utils import (  # noqa: E402
     StructureDataset,
     augment,
     canonicalize_structure,
@@ -34,7 +34,7 @@ from .utils import (
     read_structure_from_csv,
     structure_to_graph,
 )
-from .wasserstein_novelty import OTNoveltyScorer
+from .wasserstein_novelty import OTNoveltyScorer  # noqa: E402
 
 __all__ = [
     "CGCNNEncoder",

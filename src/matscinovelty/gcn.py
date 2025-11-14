@@ -31,6 +31,72 @@ if TYPE_CHECKING:  # pragma: no cover
     from accelerate import Accelerator
 
 
+class BaseCrystalEncoder(nn.Module):
+    """Shared utilities for crystal encoders (graph featurization + lattice stats)."""
+
+    def __init__(
+        self,
+        *,
+        cutoff: float = 8.0,
+        num_rbf: int = 32,
+        lattice_scale_abc: float = 10.0,
+        lattice_scale_angles: float = 180.0,
+    ) -> None:
+        super().__init__()
+        self.cutoff = cutoff
+        self.num_rbf = num_rbf
+        self.lattice_scale_abc = lattice_scale_abc
+        self.lattice_scale_angles = lattice_scale_angles
+
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
+
+    def _graph_kwargs(self) -> dict:
+        return {
+            "cutoff": self.cutoff,
+            "num_rbf": self.num_rbf,
+        }
+
+    def featurize(self, structures: Sequence) -> torch.Tensor:
+        """
+        Canonical featurizer shared by all encoders:
+        - GNN processes the raw structures using :func:`structure_to_graph`.
+        - Lattice descriptors use primitive/Niggli-reduced cells.
+        - Outputs concatenated, L2-normalized embeddings.
+        """
+
+        self.eval()
+        with torch.no_grad():
+            graphs = [structure_to_graph(s, **self._graph_kwargs()) for s in structures]
+            batch = Batch.from_data_list(graphs).to(self.device)
+            z_graph = F.normalize(self(batch), dim=1)
+
+            reduced = [
+                s.get_primitive_structure().get_reduced_structure() for s in structures
+            ]
+            lat_feats = []
+            for s_red in reduced:
+                lat = s_red.lattice
+                vec = np.array(
+                    [
+                        lat.a / self.lattice_scale_abc,
+                        lat.b / self.lattice_scale_abc,
+                        lat.c / self.lattice_scale_abc,
+                        lat.alpha / self.lattice_scale_angles,
+                        lat.beta / self.lattice_scale_angles,
+                        lat.gamma / self.lattice_scale_angles,
+                    ],
+                    dtype=np.float32,
+                )
+                lat_feats.append(vec)
+
+            lat_feats = torch.tensor(lat_feats, device=z_graph.device)
+            z = torch.cat([z_graph, lat_feats], dim=1)
+
+        return z.cpu()
+
+
 class EGNNLayer(nn.Module):
     """A lightweight EGNN block operating on invariant node features and positions."""
 
@@ -49,7 +115,6 @@ class EGNNLayer(nn.Module):
             nn.SiLU(),
             nn.Linear(hidden_features, in_features),
         )
-        self.coord_mlp = nn.Sequential(nn.Linear(hidden_features, 1), nn.SiLU())
 
     def forward(
         self,
@@ -73,32 +138,28 @@ class EGNNLayer(nn.Module):
         agg.index_add_(0, row, m_ij)
         x = x + self.node_mlp(torch.cat([x, agg], dim=-1))
 
-        w_ij = self.coord_mlp(m_ij)
-        rij_norm = rij / (rij.norm(dim=-1, keepdim=True) + 1e-8)
-        trans = rij_norm * w_ij
-        delta = torch.zeros_like(pos)
-        delta.index_add_(0, row, trans)
-        pos = pos + delta
-
-        return x, pos
+        return x
 
 
-class EquivariantCrystalGCN(nn.Module):
+class EquivariantCrystalGCN(BaseCrystalEncoder):
     """EGNN-style encoder that augments graph embeddings with reduced lattice features."""
 
     def __init__(
-        self, hidden_dim: int = 128, num_rbf: int = 32, n_layers: int = 3
+        self,
+        hidden_dim: int = 128,
+        num_rbf: int = 32,
+        n_layers: int = 3,
+        cutoff: float = 8.0,
     ) -> None:
-        super().__init__()
-        self.num_rbf = num_rbf
+        super().__init__(cutoff=cutoff, num_rbf=num_rbf)
         self.emb = nn.Embedding(100, hidden_dim)
-        self.layers = nn.ModuleList([
-            EGNNLayer(hidden_dim, hidden_dim, edge_features=num_rbf)
-            for _ in range(n_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                EGNNLayer(hidden_dim, hidden_dim, edge_features=num_rbf)
+                for _ in range(n_layers)
+            ]
+        )
         self.lin = nn.Linear(hidden_dim, hidden_dim)
-        self.lattice_scale_abc = 10.0
-        self.lattice_scale_angles = 180.0
 
     def forward(self, data):
         x = self.emb(data.x).float()
@@ -106,58 +167,23 @@ class EquivariantCrystalGCN(nn.Module):
         edge_index, edge_attr = data.edge_index, data.edge_attr
 
         for layer in self.layers:
-            x, pos = layer(x, pos, edge_index, edge_attr)
+            x = layer(x, pos, edge_index, edge_attr)
 
         x = global_mean_pool(x, data.batch)
         return self.lin(F.relu(x))
 
-    def featurize(self, structures: Sequence) -> torch.Tensor:
-        """Convert pymatgen.Structure objects into normalized embeddings."""
-        device = next(self.parameters()).device
-        self.eval()
-        with torch.no_grad():
-            graphs = [structure_to_graph(s, num_rbf=self.num_rbf) for s in structures]
-            batch = Batch.from_data_list(graphs).to(device)
-            z = F.normalize(self(batch), dim=1)
 
-            lat_feats = []
-            for s in structures:
-                a, b, c = s.lattice.a, s.lattice.b, s.lattice.c
-                alpha, beta, gamma = (
-                    s.lattice.alpha,
-                    s.lattice.beta,
-                    s.lattice.gamma,
-                )
-
-                lat = np.array([a, b, c, alpha, beta, gamma], dtype=np.float32)
-                lat /= np.array(
-                    [
-                        self.lattice_scale_abc,
-                        self.lattice_scale_abc,
-                        self.lattice_scale_abc,
-                        self.lattice_scale_angles,
-                        self.lattice_scale_angles,
-                        self.lattice_scale_angles,
-                    ],
-                    dtype=np.float32,
-                )
-                lat_feats.append(lat)
-
-            lat_feats = np.stack(lat_feats).astype(np.float32)
-            lat_feats = torch.from_numpy(lat_feats).to(device)
-            z = torch.cat([z, lat_feats], dim=1)
-
-        return z.cpu()
-
-
-class CGCNNEncoder(nn.Module):
+class CGCNNEncoder(BaseCrystalEncoder):
     """CGCNN-style encoder using CGConv layers for fast embedding extraction."""
 
     def __init__(
-        self, hidden_dim: int = 128, num_rbf: int = 32, num_layers: int = 3
+        self,
+        hidden_dim: int = 128,
+        num_rbf: int = 32,
+        num_layers: int = 3,
+        cutoff: float = 8.0,
     ) -> None:
-        super().__init__()
-        self.num_rbf = num_rbf
+        super().__init__(cutoff=cutoff, num_rbf=num_rbf)
         if num_layers < 1:
             raise ValueError("CGCNNEncoder requires at least one convolutional layer.")
         self.emb = nn.Embedding(100, hidden_dim)
@@ -176,21 +202,8 @@ class CGCNNEncoder(nn.Module):
         x = global_mean_pool(x, data.batch)
         return self.lin(x)
 
-    @torch.no_grad()
-    def featurize(self, structures: Sequence, device: str | torch.device | None = None):
-        device = (
-            torch.device(device)
-            if device is not None
-            else next(self.parameters()).device
-        )
-        self.eval()
-        graphs = [structure_to_graph(s, num_rbf=self.num_rbf) for s in structures]
-        batch = Batch.from_data_list(graphs).to(device)
-        embeddings = F.normalize(self(batch), dim=1)
-        return embeddings.detach().cpu()
 
-
-class SchNetEncoder(nn.Module):
+class SchNetEncoder(BaseCrystalEncoder):
     """Wrapper around PyG's SchNet for graph-level embeddings."""
 
     def __init__(
@@ -204,7 +217,7 @@ class SchNetEncoder(nn.Module):
         max_neighbors: int = 32,
         readout: str = "mean",
     ) -> None:
-        super().__init__()
+        super().__init__(cutoff=cutoff, num_rbf=num_gaussians)
         if not WITH_TORCH_CLUSTER:
             raise ImportError(
                 "SchNetEncoder requires the optional 'torch-cluster' dependency. "
