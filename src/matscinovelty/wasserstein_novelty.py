@@ -200,15 +200,25 @@ class TransportNoveltyDistance:
         F1 = self.featurizer(S1).to(self.device)
         F2 = self.featurizer(S2).to(self.device)
 
-        # --- nearest-neighbor distances ---
-        D = torch.cdist(F1, F2)
-        d = D.min(dim=1).values
+        M_cost = ot.dist(F1, F2, metric ='Euclidean').detach().cpu().numpy()
 
-        # --- probability ratio ---
-        p_close = (d <= tau).float().mean()
-        p_far   = (d >  tau).float().mean()
+        # 3. Solve Exact Optimal Transport (EMD)
+        # Uniform weights for both distributions
+        a = np.ones(len(S1)) / len(S1)
+        b = np.ones(len(S2)) / len(S2)
 
-        M = (p_far / p_close).item()
+        # Gamma is the transport plan (n1 x n2 matrix)
+        gamma = ot.emd(a, b, M_cost, numItermax=self.ot_num_itermax)
+
+        # 4. Compute Probabilities based on the Transport Plan
+        # We sum the mass of the transport plan where the cost is <= or > tau
+        mask_close = M_cost <= tau
+        mask_far   = M_cost > tau
+
+        p_close = np.sum(gamma[mask_close])
+        p_far   = np.sum(gamma[mask_far])
+
+        M = p_far / p_close
         return M
 
     def _get_ot_plan(self, X: torch.Tensor, Y: torch.Tensor):
