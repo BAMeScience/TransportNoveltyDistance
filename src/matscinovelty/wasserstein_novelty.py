@@ -199,8 +199,8 @@ class TransportNoveltyDistance:
 
         F1 = self.featurizer(S1).to(self.device)
         F2 = self.featurizer(S2).to(self.device)
+        M_cost = torch.cdist(F1, F2, p=2).cpu().data.numpy()
 
-        M_cost = ot.dist(F1, F2, metric ='Euclidean').detach().cpu().numpy()
 
         # 3. Solve Exact Optimal Transport (EMD)
         # Uniform weights for both distributions

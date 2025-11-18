@@ -37,7 +37,7 @@ print("Loading pretrained GCN model...")
 model = EquivariantCrystalGCN(hidden_dim=128).to(device)
 checkpoint_path = CHECKPOINTS_DIR / "egnn_invariant_mp20.pt"
 model.load_state_dict(torch.load(checkpoint_path, map_location=device))
-print("Loaded weights from gcn_fine.pt ✅")
+print("Loaded pretrained weights.✅")
 
 # --- Initialize scorer ---
 scorer = TransportNoveltyDistance(
@@ -46,126 +46,115 @@ scorer = TransportNoveltyDistance(
     device=device,
 )
 
-print(f"\n✅ Estimated τ = {scorer.tau:.4f}\n")
 
 
-# ===========================================================
-# 2️⃣ Vacancy experiment
-# ===========================================================
-vacancies = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+############################################################
+# 1️⃣ Gaussian Perturbation Experiment
+############################################################
+sigmas = np.linspace(0, 0.2, 9)
 scores = []
 
-for vac in vacancies:
-    pert = perturb_structures_corrupt(val_structs, vacancy_prob=vac, swap_prob=0.0)
+print("\n=== Gaussian Noise Experiment ===")
+for sigma in sigmas:
+    pert = perturb_structures_gaussian(val_structs, sigma=sigma, teleport_prob=0.0)
     score, *_ = scorer.compute_novelty(pert)
-    print(f"vacancy={vac:.2f} -> novelty loss={score:.4f}")
+    print(f"sigma={sigma:.3f} -> TND={score:.4f}")
     scores.append(score)
 
 plt.figure(figsize=(8, 5))
-plt.plot(vacancies, scores, marker="o", color="C0")
-plt.xlabel("Percentage of dropped atoms")
+plt.plot(sigmas, scores, marker="o")
+plt.xlabel("Gaussian σ")
 plt.ylabel("Novelty loss")
-plt.title("Novelty vs. Structure Corruption (Vacancies)")
+plt.title("Novelty vs Gaussian Noise")
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(IMGS_DIR / "novelty_vs_vacancies.png", dpi=300)
-plt.show()
+plt.savefig(IMGS_DIR / "toy_gaussian.png", dpi=300)
+plt.close()
 
 
-# ===========================================================
-# 3️⃣ Swap experiment
-# ===========================================================
-swaps = np.linspace(0, 1, 11)
+############################################################
+# 2️⃣ Lattice Deformation Experiment
+############################################################
+strains = np.linspace(0, 0.4, 9)
 scores = []
 
-for swa in swaps:
-    pert = perturb_structures_corrupt(val_structs, vacancy_prob=0.0, swap_prob=swa)
+print("\n=== Lattice Deformation Experiment ===")
+for eps in strains:
+    pert = [random_lattice_deformation(s, max_strain=eps) for s in val_structs]
     score, *_ = scorer.compute_novelty(pert)
-    print(f"swap={swa:.2f}: {score:.4f}")
+    print(f"strain={eps:.3f} -> TND={score:.4f}")
     scores.append(score)
 
 plt.figure(figsize=(8, 5))
-plt.plot(swaps, scores, marker="o", color="C1")
-plt.xlabel("Swap probability")
+plt.plot(strains, scores, marker="o")
+plt.xlabel("Max Lattice Strain")
 plt.ylabel("Novelty loss")
-plt.title("Novelty vs. Atom Swapping")
+plt.title("Novelty vs Lattice Deformation")
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(IMGS_DIR / "novelty_vs_swaps.png", dpi=300)
-plt.show()
+plt.savefig(IMGS_DIR / "toy_lattice.png", dpi=300)
+plt.close()
 
 
-# ===========================================================
-# 4️⃣ Gaussian noise experiment
-# ===========================================================
-sigmas = np.linspace(0, 0.3, 11)
+############################################################
+# 3️⃣ Supercell Substitution Experiment (2×2×2)
+############################################################
+probs = np.linspace(0, 0.2, 9)
 scores = []
 
-for sig in sigmas:
-    pert = perturb_structures_gaussian(val_structs, sigma=sig, teleport_prob=0.0)
+print("\n=== Supercell Substitution Experiment ===")
+for p in probs:
+    pert = [
+        supercell_with_random_substitutions(
+            s, scale_matrix=(2, 2, 2), p_change=p
+        )
+        for s in val_structs
+    ]
     score, *_ = scorer.compute_novelty(pert)
-    print(f"sigma={sig:.2f}: {score:.4f}")
+    print(f"p_change={p:.3f} -> TND={score:.4f}")
     scores.append(score)
 
 plt.figure(figsize=(8, 5))
-plt.plot(sigmas, scores, marker="o", color="C2")
-plt.xlabel("Gaussian noise σ")
+plt.plot(probs, scores, marker="o")
+plt.xlabel("Substitution Probability (supercell 2×2×2)")
 plt.ylabel("Novelty loss")
-plt.title("Novelty vs. Gaussian Noise")
+plt.title("Novelty vs Supercell Substitution")
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(IMGS_DIR / "novelty_vs_sigma.png", dpi=300)
-plt.show()
+plt.savefig(IMGS_DIR / "toy_supercell_substitution.png", dpi=300)
+plt.close()
 
 
-# ===========================================================
-# 5️⃣ Teleport experiment
-# ===========================================================
-teles = np.linspace(0, 1, 11)
+############################################################
+# 4️⃣ Data Leakage / Shared Samples Experiment
+#    using augment_supercell
+############################################################
+shared_fracs = np.linspace(0, 0.2, 9)
 scores = []
 
-for tele in teles:
-    pert = perturb_structures_gaussian(val_structs, teleport_prob=tele, sigma=0.0)
-    score, *_ = scorer.compute_novelty(pert)
-    print(f"teleport={tele:.2f}: {score:.4f}")
-    scores.append(score)
+print("\n=== Data Leakage (Shared Samples via augment_supercell) ===")
+for f in shared_fracs:
+    n_shared = int(f * len(val_structs))
 
-plt.figure(figsize=(8, 5))
-plt.plot(teles, scores, marker="o", color="C3")
-plt.xlabel("Teleport probability")
-plt.ylabel("Novelty loss")
-plt.title("Novelty vs. Atom Teleportation")
-plt.grid(True)
-plt.tight_layout()
-plt.savefig(IMGS_DIR / "novelty_vs_teleport.png", dpi=300)
-plt.show()
-
-
-# ===========================================================
-# 6️⃣ Shared samples / memorization experiment
-# ===========================================================
-fractions = np.linspace(0, 1, 11)
-scores = []
-
-for frac in fractions:
-    num_shared = int(frac * len(val_structs))
-    if num_shared > 0:
-        rep_idx = np.random.choice(len(train_structs), size=num_shared, replace=True)
-        s_aug = [augment(train_structs[i]) for i in rep_idx]
-        mixed = s_aug + val_structs[num_shared:]
+    if n_shared > 0:
+        rep_idx = np.random.choice(len(train_structs), size=n_shared, replace=True)
+        leaked = [augment_supercell(train_structs[i]) for i in rep_idx]
+        mixed = leaked + val_structs[n_shared:]
     else:
         mixed = val_structs
 
     score, *_ = scorer.compute_novelty(mixed)
-    print(f"{frac * 100:.0f}% shared: {score:.4f}")
+    print(f"shared={f:.3f} -> TND ={score:.4f}")
     scores.append(score)
 
 plt.figure(figsize=(8, 5))
-plt.plot(fractions * 100, scores, marker="o", color="crimson")
-plt.xlabel("Percentage of Shared (Memorized) Samples")
+plt.plot(shared_fracs, scores, marker="o", color="crimson")
+plt.xlabel("Fraction of Training Samples Reinserted")
 plt.ylabel("Novelty loss")
-plt.title("Novelty vs. Dataset Memorization")
+plt.title("Novelty vs Data Leakage (augment_supercell)")
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(IMGS_DIR / "novelty_vs_shared.png", dpi=300)
-plt.show()
+plt.savefig(IMGS_DIR / "toy_data_leakage.png", dpi=300)
+plt.close()
+
+print("\nAll plots saved to imgs/. Done! 🎉")
