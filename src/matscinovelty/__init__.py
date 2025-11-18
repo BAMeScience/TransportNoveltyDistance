@@ -22,6 +22,7 @@ from .gcn import (  # noqa: E402
 from .utils import (  # noqa: E402
     StructureDataset,
     augment,
+    augment_supercell,
     canonicalize_structure,
     coverage_score,
     load_structures_from_json_column,
@@ -29,11 +30,14 @@ from .utils import (  # noqa: E402
     perturb_structures,
     perturb_structures_corrupt,
     perturb_structures_gaussian,
+    random_lattice_deformation,
+    supercell_with_random_substitutions,
+    supercell_with_substitutions_list,
     read_csv,
     read_structure_from_csv,
     structure_to_graph,
 )
-from .wasserstein_novelty import TransportNoveltyDistance  # noqa: E402
+from .wasserstein_novelty import TransportNoveltyDistance
 
 __all__ = [
     "CGCNNEncoder",

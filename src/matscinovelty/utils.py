@@ -407,3 +407,150 @@ def perturb_structures_gaussian(
         perturbed_structures.append(perturbed)
 
     return perturbed_structures
+
+
+
+def augment_supercell(structure: Structure) -> Structure:
+    """
+    Return an augmented copy of a pymatgen Structure by applying:
+      - random supercell expansion (50% probability)
+      - random 3D rotation
+      - random fractional translation
+    """
+    s = structure.copy()
+
+    # --- (1) 20% chance to make a supercell ---
+    if np.random.rand() < 0.5:
+        # Random supercell choice (e.g. 2x1x1, 1x2x2, etc.)
+        scale_options = [
+            (2, 1, 1), (1, 2, 1), (1, 1, 2),
+            (2, 2, 1), (2, 1, 2), (1, 2, 2),
+            (2, 2, 2)
+        ]
+        scale = scale_options[np.random.randint(len(scale_options))]
+        s.make_supercell(scale)
+
+    # --- (2) Random rotation ---
+    rand_matrix = np.random.normal(size=(3,3))
+    Q, _ = np.linalg.qr(rand_matrix)
+    if np.linalg.det(Q) < 0:
+        Q[:,0] = -Q[:,0]
+
+    op = SymmOp.from_rotation_and_translation(rotation_matrix=Q, translation_vec=[0,0,0])
+    s.apply_operation(op, fractional=False)
+
+    # --- (3) Random fractional translation ---
+    shift = np.random.rand(3)
+    s.translate_sites(range(len(s)), shift, frac_coords=True, to_unit_cell=True)
+
+    return s
+
+
+
+def random_lattice_deformation(
+    s: Structure,
+    max_strain: float = 0.1,
+    shear_prob: float = 0.5,
+    rng=None
+) -> Structure:
+    """
+    Apply a random lattice deformation (stretch + shear) to a Structure.
+
+    Args:
+        s (Structure): base structure.
+        max_strain (float): maximum magnitude of strain (~0.1 = 10%).
+        shear_prob (float): probability to include off-diagonal (shear) terms.
+        rng (np.random.Generator): optional RNG for reproducibility.
+
+    Returns:
+        Structure: distorted copy with same fractional coordinates.
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    A = s.lattice.matrix  # 3x3
+
+    # diagonal strain (stretch/compression along axes)
+    eps_diag = rng.uniform(-max_strain, max_strain, size=3)
+    F = np.diag(1.0 + eps_diag)
+
+    # add shear components with some probability
+    if rng.random() < shear_prob:
+        shear = rng.uniform(-max_strain, max_strain, size=(3,3))
+        np.fill_diagonal(shear, 0.0)
+        F += shear
+
+    new_lat = A @ F
+
+    # build new structure
+    new_s = Structure(
+        lattice=new_lat,
+        species=[str(site.specie) for site in s.sites],
+        coords=[site.frac_coords for site in s.sites],
+        coords_are_cartesian=False
+    )
+
+    return new_s
+
+
+def supercell_with_substitutions_list(structures, **kwargs):
+    return [supercell_with_random_substitutions(s, **kwargs) for s in structures]
+
+
+
+def supercell_with_random_substitutions(
+    s: Structure,
+    scale_matrix=(3, 3, 3),
+    p_change=0.05,
+    allowed_species=None,
+    rng=None,
+) -> Structure:
+    """
+    Make a supercell, then randomly mutate atom species with probability p_change.
+
+    Args:
+        s: pymatgen Structure
+        scale_matrix: tuple or 3×3 matrix for Structure.make_supercell
+        p_change: probability that each atom changes species
+        allowed_species: list of species to choose from (default: species already present)
+        rng: numpy random generator
+
+    Returns:
+        New Structure with random substitutions (not swaps; stoichiometry changes)
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    # --- Make supercell ---
+    big = s.copy()
+    big.make_supercell(scale_matrix)
+
+    coords = np.array([site.frac_coords for site in big.sites])
+    old_species = np.array([str(site.specie) for site in big.sites], dtype=object)
+
+    # Allowed replacement species
+    if allowed_species is None:
+        allowed_species = sorted({str(site.specie) for site in s.sites})
+
+    allowed_species = np.array(allowed_species, dtype=object)
+
+    # --- Apply mutations ---
+    new_species = old_species.copy()
+    mask = rng.random(len(new_species)) < p_change
+
+    # For each atom flagged for mutation, choose a random species different from current
+    for idx in np.where(mask)[0]:
+        choices = allowed_species[allowed_species != old_species[idx]]
+        if len(choices) > 0:
+            new_species[idx] = rng.choice(choices)
+
+    # --- Build final structure ---
+    mutated = Structure(
+        lattice=big.lattice,
+        species=new_species.tolist(),
+        coords=coords,
+        coords_are_cartesian=False,
+    )
+
+    return mutated
+
