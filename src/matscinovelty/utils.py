@@ -212,69 +212,6 @@ def coverage_score(train_feats, gen_feats, threshold=0.05):
     return (min_dists <= threshold).float().mean().item()
 
 
-def load_wyckoff_structures(df):
-    """
-    Reconstructs full pymatgen.Structure objects from Wyckoff-format model outputs.
-    Works for WyFormer, SymmCD, etc. where structure info is split across columns.
-    """
-
-    structures = []
-    for i, row in df.iterrows():
-        try:
-            # --- Parse lattice ---
-            if "lattice" in df.columns:
-                lattice_dict = (
-                    json.loads(row["lattice"])
-                    if isinstance(row["lattice"], str)
-                    else row["lattice"]
-                )
-                lattice = Lattice.from_parameters(**lattice_dict)
-            else:
-                # Fallback: cubic dummy (rarely needed)
-                lattice = Lattice.cubic(5.0)
-
-            # --- Parse coordinates ---
-            if "sites" in df.columns:
-                sites = (
-                    json.loads(row["sites"])
-                    if isinstance(row["sites"], str)
-                    else row["sites"]
-                )
-                coords = [s["abc"] if "abc" in s else s for s in sites]
-            elif "sites_enumeration" in df.columns:
-                coords = (
-                    json.loads(row["sites_enumeration"])
-                    if isinstance(row["sites_enumeration"], str)
-                    else row["sites_enumeration"]
-                )
-            else:
-                raise ValueError("No site coordinates found.")
-
-            # --- Parse elements/species ---
-            species = (
-                json.loads(row["species"])
-                if isinstance(row["species"], str)
-                else row["species"]
-            )
-            if isinstance(species[0], dict):
-                species = [list(s.keys())[0] for s in species]  # if dict like {'Na':1}
-
-            # --- Construct structure ---
-            struct = Structure(
-                lattice=lattice,
-                species=species,
-                coords=coords,
-                coords_are_cartesian=False,
-            )
-            structures.append(struct)
-
-        except Exception as e:
-            print(f"Skipping row {i}: {type(e).__name__} - {e}")
-            continue
-
-    print(f"✅ Reconstructed {len(structures)} structures from Wyckoff CSV.")
-    return structures
-
 
 def perturb_structures(
     original_structures, mode="lattice_scale", strength=0.1, rng=None

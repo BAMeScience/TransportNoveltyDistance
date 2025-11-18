@@ -22,7 +22,7 @@ from .gcn import EquivariantCrystalGCN
 from .utils import augment
 
 
-class OTNoveltyScorer:
+class TransportNoveltyDistance:
     """
     Evaluate generative models with the OT-based novelty metric introduced in the
     paper.
@@ -39,7 +39,6 @@ class OTNoveltyScorer:
         *,
         featurizer: Optional[Callable[[Sequence], torch.Tensor]] = None,
         tau: Optional[float] = None,
-        tau_quantile: Optional[float] = None,
         memorization_weight: Optional[float] = None,
         device: str | torch.device | None = None,
         pretrained_weights: Optional[str] = None,
@@ -78,7 +77,6 @@ class OTNoveltyScorer:
         self.device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
         )
-        self.tau_quantile = tau_quantile
 
         if featurizer is not None:
             self.model = None
@@ -101,65 +99,18 @@ class OTNoveltyScorer:
         self.ot_num_itermax = ot_num_itermax
 
         self.tau, self.m_weight = self._resolve_tau_and_weight(
-            tau=tau, tau_quantile=tau_quantile, memorization_weight=memorization_weight
+            tau=tau, memorization_weight=memorization_weight
         )
 
         print(
             f"Using τ = {self.tau:.4f} with memorization weight = {self.m_weight:.4f}"
         )
 
-    def _estimate_tau_ot(
-        self,
-        fine_features: torch.Tensor,
-        split_ratio: float = 0.5,
-        quantile: float = 0.5,
-    ):
-        """
-        Estimate ``tau`` from the OT distance between two subsets of the training
-        features.
-
-        Parameters
-        ----------
-        fine_features
-            Embedded training structures.
-        split_ratio
-            Fraction of samples placed into the first subset (the rest go into
-            the second subset).
-        quantile
-            Percentile of the OT distance distribution to use as the cutoff.
-
-        Returns
-        -------
-        float
-            Empirical OT distance quantile used as the novelty threshold.
-        """
-        n = fine_features.size(0)
-        n1 = int(split_ratio * n)
-        idx = torch.randperm(n)
-        f1, f2 = fine_features[idx[:n1]], fine_features[idx[n1:]]
-
-        C = torch.cdist(f1, f2, p=2)
-        a = torch.full((f1.size(0),), 1.0 / f1.size(0))
-        b = torch.full((f2.size(0),), 1.0 / f2.size(0))
-        P = torch.from_numpy(
-            ot.emd(
-                a.numpy(),
-                b.numpy(),
-                C.cpu().numpy(),
-                numItermax=self.ot_num_itermax,
-            )
-        ).to(C.device)
-        d_flat, w_flat = C.flatten(), P.flatten() / P.sum()
-        sorted_idx = torch.argsort(d_flat)
-        cumw = torch.cumsum(w_flat[sorted_idx], dim=0)
-        cutoff = torch.searchsorted(cumw, quantile)
-        return d_flat[sorted_idx[min(cutoff, len(cumw) - 1)]].item()
 
     def _resolve_tau_and_weight(
         self,
         *,
         tau: float | None,
-        tau_quantile: float | None,
         memorization_weight: float | None,
     ) -> tuple[float, float]:
         """Determine τ and the memorization weight given user inputs."""
@@ -170,14 +121,8 @@ class OTNoveltyScorer:
             _, m_scale = self.calibrate_principled_tau(fixed_tau=tau)
             return tau, m_scale
 
-        if tau_quantile is not None:
-            tau_auto = self._estimate_tau_ot(self.train_feats, quantile=tau_quantile)
-            if memorization_weight is not None:
-                return tau_auto, memorization_weight
-            _, m_scale = self.calibrate_principled_tau(fixed_tau=tau_auto)
-            return tau_auto, m_scale
-
         tau_auto, auto_m_weight = self.calibrate_principled_tau(fixed_tau=None)
+        auto_m_weight = self.compute_M_principled(tau_auto)
         return tau_auto, memorization_weight or auto_m_weight
 
     def calibrate_principled_tau(
@@ -232,6 +177,39 @@ class OTNoveltyScorer:
         m_weight = (numerator / denominator).item()
 
         return optimal_tau, m_weight
+
+    def compute_M_principled(self, tau: float):
+        """
+        Compute the principled memorization penalty M using:
+            M = P(d > tau) / P(d <= tau)
+        where d are nearest-neighbor distances between two random
+        splits of the training set.
+
+        No safeguards, no checks, does not modify any existing code.
+        """
+
+        # --- random split of training set ---
+        n = len(self.train_structs)
+        idx = torch.randperm(n)
+        k = n // 2
+        idx1, idx2 = idx[:k], idx[k:]
+
+        S1 = [self.train_structs[i] for i in idx1]
+        S2 = [self.train_structs[i] for i in idx2]
+
+        F1 = self.featurizer(S1).to(self.device)
+        F2 = self.featurizer(S2).to(self.device)
+
+        # --- nearest-neighbor distances ---
+        D = torch.cdist(F1, F2)
+        d = D.min(dim=1).values
+
+        # --- probability ratio ---
+        p_close = (d <= tau).float().mean()
+        p_far   = (d >  tau).float().mean()
+
+        M = (p_far / p_close).item()
+        return M
 
     def _get_ot_plan(self, X: torch.Tensor, Y: torch.Tensor):
         """
@@ -290,121 +268,3 @@ class OTNoveltyScorer:
         )
         return total.item(), qual_comp.item(), mem_comp.item()
 
-
-class EnergyAwareOTNoveltyScorer(OTNoveltyScorer):
-    """
-    OT-based novelty scorer that evaluates quality via a fast energy surrogate
-    (e.g., MACE). Structures far from the training manifold are not immediately
-    penalized; instead, the model predicts an energy-above-hull value and only
-    applies a penalty when that value exceeds ``energy_threshold_ev``.
-    """
-
-    def __init__(
-        self,
-        train_structures: Sequence,
-        *,
-        energy_threshold_ev: float = 0.05,
-        energy_weight: float = 1.0,
-        mace_model_kwargs: Optional[dict] = None,
-        energy_predictor: Optional[Callable[[Sequence], np.ndarray]] = None,
-        device: str | torch.device | None = None,
-        **kwargs,
-    ) -> None:
-        """
-        Parameters
-        ----------
-        train_structures
-            Reference structures used to anchor novelty evaluation.
-        energy_threshold_ev
-            Maximum allowed (predicted) energy above hull in eV/atom before a
-            penalty is applied.
-        energy_weight
-            Scalar multiplier on the energy penalty relative to the OT
-            memorization term.
-        mace_model_kwargs
-            Extra keyword arguments forwarded to :func:`mace.calculators.mace_mp`
-            when the default MACE predictor is used.
-        energy_predictor
-            Optional callable ``f(structures) -> np.ndarray`` returning energies
-            in eV/atom. Providing this bypasses the internal MACE loading logic
-            and makes unit testing simpler.
-        device
-            Torch device used for the embedding model. The energy surrogate
-            follows suit.
-        kwargs
-            Forwarded to :class:`OTNoveltyScorer`.
-        """
-        super().__init__(train_structures, device=device, **kwargs)
-        self.energy_threshold = energy_threshold_ev
-        self.energy_weight = energy_weight
-        self.energy_device = (
-            torch.device(device)
-            if device is not None
-            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        )
-
-        self._train_energy_mean = None
-        if energy_predictor is not None:
-            self._energy_predictor = energy_predictor
-            self.mace = None
-        else:
-            self.mace = None
-            try:
-                from mace.calculators import mace_mp
-            except ImportError as exc:  # pragma: no cover
-                raise ImportError(
-                    "EnergyAwareOTNoveltyScorer requires the 'mace' package or a custom energy_predictor. "
-                    "Install it via `pip install mace-torch` or pass `energy_predictor` explicitly."
-                ) from exc
-
-            model_kwargs = mace_model_kwargs or {}
-            self.mace = mace_mp(device=str(self.energy_device), **model_kwargs)
-            self._energy_predictor = self._predict_with_mace
-            print("Loaded MACE energy surrogate for novelty scoring.")
-
-    def _predict_with_mace(self, structures: Sequence) -> np.ndarray:
-        energies = []
-        for struct in structures:
-            energies.append(self.mace.get_potential_energy(struct))
-        return np.asarray(energies, dtype=float)
-
-    def _predict_e_above_hull(self, structures: Sequence) -> np.ndarray:
-        energies = np.asarray(self._energy_predictor(structures), dtype=float)
-        reference = self._train_energy_mean
-        if reference is None:
-            ref_structs = self.train_structs[: min(len(self.train_structs), 100)]
-            reference = float(np.mean(self._energy_predictor(ref_structs)))
-            self._train_energy_mean = reference
-        return energies - reference
-
-    def compute_novelty(self, gen_structures: Sequence):
-        r"""
-        Evaluate the energy-aware novelty loss
-
-        .. math::
-            \mathcal{L} = \sum_{i,j} P_{ij} \max(0, e_j - e_{\text{thr}})
-            + \lambda \sum_{i,j} P_{ij} \max(0, \tau - C_{ij}),
-
-        where :math:`e_j` is the predicted energy-above-hull for generated
-        sample :math:`j`, :math:`e_{\text{thr}}` the allowed threshold,
-        :math:`P` the OT plan, :math:`C` the embedding distances, and
-        :math:`\lambda` the memorization weight.
-        """
-        gen_feats = self.featurizer(gen_structures).to(self.device)
-        P, C = self._get_ot_plan(self.train_feats, gen_feats)
-
-        e_above = self._predict_e_above_hull(gen_structures)
-        # Align energy array to OT columns
-        e_tensor = torch.tensor(e_above, device=self.device, dtype=C.dtype)
-
-        mem_cost = torch.relu(self.tau - C)
-        mem_comp = torch.sum(P * mem_cost) * self.m_weight
-
-        energy_penalty = torch.relu(e_tensor - self.energy_threshold)
-        qual_comp = torch.sum(P * energy_penalty) * self.energy_weight
-
-        total = qual_comp + mem_comp
-        print(
-            f"Energy penalty={qual_comp:.4f}, Memorization={mem_comp:.4f}, Total={total:.4f}"
-        )
-        return total.item(), qual_comp.item(), mem_comp.item()

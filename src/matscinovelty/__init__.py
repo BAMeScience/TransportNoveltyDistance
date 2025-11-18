@@ -25,7 +25,6 @@ from .utils import (  # noqa: E402
     canonicalize_structure,
     coverage_score,
     load_structures_from_json_column,
-    load_wyckoff_structures,
     novelty_score,
     perturb_structures,
     perturb_structures_corrupt,
@@ -34,7 +33,7 @@ from .utils import (  # noqa: E402
     read_structure_from_csv,
     structure_to_graph,
 )
-from .wasserstein_novelty import OTNoveltyScorer  # noqa: E402
+from .wasserstein_novelty import TransportNoveltyDistance  # noqa: E402
 
 __all__ = [
     "CGCNNEncoder",

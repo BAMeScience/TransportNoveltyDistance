@@ -8,7 +8,7 @@ from numpy.exceptions import ComplexWarning
 
 from matscinovelty import (
     EquivariantCrystalGCN,
-    OTNoveltyScorer,
+    TransportNoveltyDistance,
     augment,
     perturb_structures_corrupt,
     perturb_structures_gaussian,
@@ -35,17 +35,14 @@ del val_structs[232]  # remove broken entry if needed
 # --- Load pretrained model ---
 print("Loading pretrained GCN model...")
 model = EquivariantCrystalGCN(hidden_dim=128).to(device)
-checkpoint_path = CHECKPOINTS_DIR / "gcn_fine.pt"
+checkpoint_path = CHECKPOINTS_DIR / "egnn_invariant_mp20.pt"
 model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 print("Loaded weights from gcn_fine.pt ✅")
 
 # --- Initialize scorer ---
-scorer = OTNoveltyScorer(
+scorer = TransportNoveltyDistance(
     train_structures=train_structs,
     gnn_model=model,  # directly pass model
-    tau=None,  #  pass tau directly or leave None if auto-estimate
-    tau_quantile=0.05,  # 1% quantile threshold
-    memorization_weight=10.0,
     device=device,
 )
 
@@ -101,7 +98,7 @@ plt.show()
 # ===========================================================
 # 4️⃣ Gaussian noise experiment
 # ===========================================================
-sigmas = np.linspace(0, 1, 11)
+sigmas = np.linspace(0, 0.3, 11)
 scores = []
 
 for sig in sigmas:

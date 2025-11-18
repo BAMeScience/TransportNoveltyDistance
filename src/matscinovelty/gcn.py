@@ -70,29 +70,7 @@ class BaseCrystalEncoder(nn.Module):
         with torch.no_grad():
             graphs = [structure_to_graph(s, **self._graph_kwargs()) for s in structures]
             batch = Batch.from_data_list(graphs).to(self.device)
-            z_graph = F.normalize(self(batch), dim=1)
-
-            reduced = [
-                s.get_primitive_structure().get_reduced_structure() for s in structures
-            ]
-            lat_feats = []
-            for s_red in reduced:
-                lat = s_red.lattice
-                vec = np.array(
-                    [
-                        lat.a / self.lattice_scale_abc,
-                        lat.b / self.lattice_scale_abc,
-                        lat.c / self.lattice_scale_abc,
-                        lat.alpha / self.lattice_scale_angles,
-                        lat.beta / self.lattice_scale_angles,
-                        lat.gamma / self.lattice_scale_angles,
-                    ],
-                    dtype=np.float32,
-                )
-                lat_feats.append(vec)
-
-            lat_feats = torch.tensor(lat_feats, device=z_graph.device)
-            z = torch.cat([z_graph, lat_feats], dim=1)
+            z = F.normalize(self(batch), dim=1)
 
         return z.cpu()
 

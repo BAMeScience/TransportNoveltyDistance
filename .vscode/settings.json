@@ -19,7 +19,7 @@
   "python.testing.pytestArgs": ["tests"],
   "python.testing.unittestEnabled": false,
   "editor.defaultFormatter": "charliermarsh.ruff",
-  "editor.formatOnSave": true,
+  "editor.formatOnSave": false,
   "editor.codeActionsOnSave": {
     "source.organizeImports.ruff": "always",
     "source.fixAll.ruff": "always",
@@ -44,4 +44,5 @@
       },
     ]
   },
+  "editor.fontFamily": "'Droid Sans Mono', 'monospace', monospace",
 }
