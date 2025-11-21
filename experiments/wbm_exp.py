@@ -13,7 +13,7 @@ from matscinovelty import (
     EquivariantCrystalGCN,
     CGCNNEncoder,
     SchNetEncoder,
-    OTNoveltyScorer,
+    TransportNoveltyDistance,
     read_structure_from_csv,
 )
 
@@ -276,11 +276,10 @@ def recreate_model():
 
 model = recreate_model()
 
-scorer = OTNoveltyScorer(
+scorer = TransportNoveltyDistance(
     train_structures=str_train,
     gnn_model=model,
     tau=None,  # auto-estimate τ
-    tau_quantile=None,
     memorization_weight=None,
     device=device,
 )
