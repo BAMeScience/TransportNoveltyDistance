@@ -42,7 +42,7 @@ del val_structs[232]  # remove broken entry if needed
 # --- Load pretrained model ---
 print("Loading pretrained GCN model...")
 model = EquivariantCrystalGCN(hidden_dim=128).to(device)
-checkpoint_path = CHECKPOINTS_DIR / "egnn_invariant_mp20.pt"
+checkpoint_path = CHECKPOINTS_DIR / "gcn_mp20.pt"
 model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 print("Loaded pretrained weights.✅")
 

@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=CHECKPOINTS_DIR / "egnn_invariant_mp20.pt",
+        default=CHECKPOINTS_DIR / "gcn_mp20.pt",
         help="Path to the encoder checkpoint (default: checkpoints/egnn_invariant_mp20.pt).",
     )
     return parser.parse_args()
