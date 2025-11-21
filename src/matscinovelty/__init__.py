@@ -31,6 +31,8 @@ from .utils import (  # noqa: E402
     perturb_structures_corrupt,
     perturb_structures_gaussian,
     random_lattice_deformation,
+    random_supercell,
+    random_group_substitution,
     supercell_with_random_substitutions,
     supercell_with_substitutions_list,
     read_csv,

@@ -23,6 +23,7 @@ warnings.filterwarnings(
 
 from .utils import (  # noqa: E402
     augment,
+    augment_supercell,
     read_structure_from_csv,
     structure_to_graph,
 )
@@ -277,8 +278,8 @@ class GraphContrastiveDataset(Dataset):
 
     def __getitem__(self, idx: int):
         structure = self.structures[idx]
-        g1 = structure_to_graph(augment(structure), num_rbf=self.num_rbf)
-        g2 = structure_to_graph(augment(structure), num_rbf=self.num_rbf)
+        g1 = structure_to_graph(augment_supercell(structure), num_rbf=self.num_rbf)
+        g2 = structure_to_graph(augment_supercell(structure), num_rbf=self.num_rbf)
         return g1, g2
 
 
@@ -438,7 +439,6 @@ def train_contrastive_model(
         prefetch_factor=prefetch_factor,
         persistent_workers=persistent_workers,
     )
-
     if accelerator is not None:
         model, opt = accelerator.prepare(model, opt)
 

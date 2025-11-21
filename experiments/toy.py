@@ -10,6 +10,13 @@ from matscinovelty import (
     EquivariantCrystalGCN,
     TransportNoveltyDistance,
     augment,
+    augment_supercell,
+    random_lattice_deformation,
+    supercell_with_random_substitutions,
+    supercell_with_substitutions_list,
+    random_group_substitution,
+    random_group_substitution,
+    random_supercell,
     perturb_structures_corrupt,
     perturb_structures_gaussian,
     read_structure_from_csv,
@@ -46,12 +53,7 @@ scorer = TransportNoveltyDistance(
     device=device,
 )
 
-
-
-############################################################
-# 1️⃣ Gaussian Perturbation Experiment
-############################################################
-sigmas = np.linspace(0, 0.2, 9)
+sigmas = np.linspace(0, 0.15, 10)
 scores = []
 
 print("\n=== Gaussian Noise Experiment ===")
@@ -73,12 +75,12 @@ plt.close()
 
 
 ############################################################
-# 2️⃣ Lattice Deformation Experiment
+# 2️⃣ Random Binary Lattice Strain Experiment
 ############################################################
-strains = np.linspace(0, 0.4, 9)
+strains = np.linspace(0, 0.6, 10)
 scores = []
 
-print("\n=== Lattice Deformation Experiment ===")
+print("\n=== Random Binary Lattice Strain Experiment ===")
 for eps in strains:
     pert = [random_lattice_deformation(s, max_strain=eps) for s in val_structs]
     score, *_ = scorer.compute_novelty(pert)
@@ -87,74 +89,98 @@ for eps in strains:
 
 plt.figure(figsize=(8, 5))
 plt.plot(strains, scores, marker="o")
-plt.xlabel("Max Lattice Strain")
+plt.xlabel("Binary Lattice Strain Magnitude")
 plt.ylabel("Novelty loss")
-plt.title("Novelty vs Lattice Deformation")
+plt.title("Novelty vs Binary Lattice Strain")
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(IMGS_DIR / "toy_lattice.png", dpi=300)
+plt.savefig(IMGS_DIR / "toy_binary_lattice.png", dpi=300)
 plt.close()
 
 
 ############################################################
-# 3️⃣ Supercell Substitution Experiment (2×2×2)
+# 3️⃣ Random Supercell Experiment (probabilistic)
 ############################################################
-probs = np.linspace(0, 0.2, 9)
+probs = np.linspace(0, 0.5, 10)
 scores = []
 
-print("\n=== Supercell Substitution Experiment ===")
+print("\n=== Random Supercell Experiment ===")
 for p in probs:
-    pert = [
-        supercell_with_random_substitutions(
-            s, scale_matrix=(2, 2, 2), p_change=p
-        )
-        for s in val_structs
-    ]
+    pert = [random_supercell(s, p=p) for s in val_structs]
     score, *_ = scorer.compute_novelty(pert)
-    print(f"p_change={p:.3f} -> TND={score:.4f}")
+    print(f"p_supercell={p:.3f} -> TND={score:.4f}")
     scores.append(score)
 
 plt.figure(figsize=(8, 5))
 plt.plot(probs, scores, marker="o")
-plt.xlabel("Substitution Probability (supercell 2×2×2)")
+plt.xlabel("Supercell Probability")
 plt.ylabel("Novelty loss")
-plt.title("Novelty vs Supercell Substitution")
+plt.title("Novelty vs Random Supercell Probability")
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(IMGS_DIR / "toy_supercell_substitution.png", dpi=300)
+plt.savefig(IMGS_DIR / "toy_supercell_prob.png", dpi=300)
 plt.close()
 
 
 ############################################################
-# 4️⃣ Data Leakage / Shared Samples Experiment
-#    using augment_supercell
+# 4️⃣ Random Same-Group Substitution Experiment
 ############################################################
-shared_fracs = np.linspace(0, 0.2, 9)
+
+allowed_elements = set()
+for s in train_structs:
+    for site in s.sites:
+        allowed_elements.add(str(site.specie))
+probs = np.linspace(0, 0.5, 10)
 scores = []
 
-print("\n=== Data Leakage (Shared Samples via augment_supercell) ===")
+print("\n=== Random Same-Group Substitution Experiment ===")
+for p in probs:
+    pert = [random_group_substitution(s, allowed_elements, p=p) for s in val_structs]
+    score, *_ = scorer.compute_novelty(pert)
+    print(f"p_group_sub={p:.3f} -> TND={score:.4f}")
+    scores.append(score)
+
+plt.figure(figsize=(8, 5))
+plt.plot(probs, scores, marker="o")
+plt.xlabel("Same-Group Substitution Probability")
+plt.ylabel("Novelty loss")
+plt.title("Novelty vs Group Substitution")
+plt.grid(True)
+plt.tight_layout()
+plt.savefig(IMGS_DIR / "toy_group_substitution.png", dpi=300)
+plt.close()
+
+
+############################################################
+# 5️⃣ Data Leakage / Shared Samples Experiment
+############################################################
+shared_fracs = np.linspace(0, 1.0, 10)
+scores = []
+
+print("\n=== Data Leakage (Shared Samples) ===")
 for f in shared_fracs:
     n_shared = int(f * len(val_structs))
 
     if n_shared > 0:
         rep_idx = np.random.choice(len(train_structs), size=n_shared, replace=True)
-        leaked = [augment_supercell(train_structs[i]) for i in rep_idx]
+        leaked = [random_supercell(train_structs[i], p=1.0) for i in rep_idx]
         mixed = leaked + val_structs[n_shared:]
     else:
         mixed = val_structs
 
     score, *_ = scorer.compute_novelty(mixed)
-    print(f"shared={f:.3f} -> TND ={score:.4f}")
+    print(f"shared={f:.3f} -> TND={score:.4f}")
     scores.append(score)
 
 plt.figure(figsize=(8, 5))
 plt.plot(shared_fracs, scores, marker="o", color="crimson")
 plt.xlabel("Fraction of Training Samples Reinserted")
 plt.ylabel("Novelty loss")
-plt.title("Novelty vs Data Leakage (augment_supercell)")
+plt.title("Novelty vs Data Leakage")
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(IMGS_DIR / "toy_data_leakage.png", dpi=300)
 plt.close()
 
-print("\nAll plots saved to imgs/. Done! 🎉")
+
+print("\n✅ All updated perturbation plots saved to imgs/. Done! 🎉")

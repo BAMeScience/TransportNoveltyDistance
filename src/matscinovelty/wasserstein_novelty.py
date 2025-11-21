@@ -115,111 +115,10 @@ class TransportNoveltyDistance:
     ) -> tuple[float, float]:
         """Determine τ and the memorization weight given user inputs."""
 
-        if tau is not None:
-            if memorization_weight is not None:
-                return tau, memorization_weight
-            _, m_scale = self.calibrate_principled_tau(fixed_tau=tau)
-            return tau, m_scale
-
-        tau_auto, auto_m_weight = self.calibrate_principled_tau(fixed_tau=None)
-        auto_m_weight = self.compute_M_principled(tau_auto)
-        return tau_auto, memorization_weight or auto_m_weight
-
-    def calibrate_principled_tau(
-        self, fixed_tau: float | None = None
-    ) -> tuple[float, float]:
-        """
-        Separate augmented copies from real samples via a brute-force threshold search.
-
-        Returns
-        -------
-        (tau, memorization_scale)
-            ``tau`` maximizes separation between leave-one-out distances and
-            augmented copies; the second value rescales the memorization penalty
-            so that both terms lie on comparable magnitudes.
-
-        Raises
-        ------
-        ValueError
-            If fewer than two training structures are available.
-        """
-        if len(self.train_structs) < 2:
-            raise ValueError("Calibration requires at least two training structures.")
-
-        pairwise = torch.cdist(self.train_feats, self.train_feats)
-        pairwise.fill_diagonal_(float("inf"))
-        d_loocv = pairwise.min(dim=1).values
-
-        augmented_structs = [augment(s) for s in self.train_structs]
-        aug_feats = self.featurizer(augmented_structs).to(self.device)
-        d_aug = torch.cdist(aug_feats, self.train_feats).min(dim=1).values
-
-        if fixed_tau is None:
-            all_distances = torch.cat([d_aug, d_loocv])
-            labels = torch.cat([torch.ones_like(d_aug), torch.zeros_like(d_loocv)])
-
-            min_error = float("inf")
-            optimal_tau = float((d_aug.mean() + d_loocv.mean()) / 2.0)
-
-            for tau_candidate in torch.unique(all_distances):
-                predictions = (all_distances < tau_candidate).float()
-                error = torch.abs(predictions - labels).sum()
-                if error < min_error:
-                    min_error = error
-                    optimal_tau = tau_candidate.item()
-        else:
-            optimal_tau = fixed_tau
-
-        numerator = d_loocv.mean() + 2 * d_loocv.std() - optimal_tau
-        denominator = max(
-            optimal_tau - d_aug.mean(), torch.tensor(1e-6, device=self.device)
-        )
-        m_weight = (numerator / denominator).item()
-
-        return optimal_tau, m_weight
-
-    def compute_M_principled(self, tau: float):
-        """
-        Compute the principled memorization penalty M using:
-            M = P(d > tau) / P(d <= tau)
-        where d are nearest-neighbor distances between two random
-        splits of the training set.
-
-        No safeguards, no checks, does not modify any existing code.
-        """
-
-        # --- random split of training set ---
-        n = len(self.train_structs)
-        idx = torch.randperm(n)
-        k = n // 2
-        idx1, idx2 = idx[:k], idx[k:]
-
-        S1 = [self.train_structs[i] for i in idx1]
-        S2 = [self.train_structs[i] for i in idx2]
-
-        F1 = self.featurizer(S1).to(self.device)
-        F2 = self.featurizer(S2).to(self.device)
-        M_cost = torch.cdist(F1, F2, p=2).cpu().data.numpy()
-
-
-        # 3. Solve Exact Optimal Transport (EMD)
-        # Uniform weights for both distributions
-        a = np.ones(len(S1)) / len(S1)
-        b = np.ones(len(S2)) / len(S2)
-
-        # Gamma is the transport plan (n1 x n2 matrix)
-        gamma = ot.emd(a, b, M_cost, numItermax=self.ot_num_itermax)
-
-        # 4. Compute Probabilities based on the Transport Plan
-        # We sum the mass of the transport plan where the cost is <= or > tau
-        mask_close = M_cost <= tau
-        mask_far   = M_cost > tau
-
-        p_close = np.sum(gamma[mask_close])
-        p_far   = np.sum(gamma[mask_far])
-
-        M = p_far / p_close
-        return M
+        if tau is None or memorization_weight is None:
+            tau, memorization_weight = self.calibrate_tau_and_M()
+        #auto_m_weight = self.compute_M_principled(tau_auto)
+        return tau, memorization_weight
 
     def _get_ot_plan(self, X: torch.Tensor, Y: torch.Tensor):
         """
@@ -248,6 +147,81 @@ class TransportNoveltyDistance:
             )
         ).to(C.device)
         return P, C
+
+    def calibrate_tau_and_M(self):
+        """
+        Jointly calibrate tau and M using:
+
+        tau:
+            uniform threshold minimizing misclassification between
+            theoretical 1NN/2NN mask and threshold predictor
+
+        M:
+            computed via OT mass ratio between two random splits
+
+        Returns
+        -------
+        (tau, M)
+        """
+
+        # ---------- Step 1: compute 1-NN and 2-NN distances ----------
+
+        pairwise = torch.cdist(self.train_feats, self.train_feats)
+        pairwise.fill_diagonal_(float("inf"))
+
+        sorted_dists, _ = torch.sort(pairwise, dim=1)
+        d1 = sorted_dists[:, 0]  # 1-NN
+        d2 = sorted_dists[:, 1]  # 2-NN
+
+        # Theoretical memorization mask from 1NN/2NN rule
+        y_true = ((d1 ** 2) <= (d2**2 / 9.0)).float()
+
+        # ---------- Step 2: grid search tau minimizing classification error ----------
+
+        candidate_taus = torch.unique(d1)
+        min_error = float("inf")
+        tau_opt = candidate_taus.mean().item()
+
+        for tau_candidate in candidate_taus:
+            y_pred = (d1 <= tau_candidate).float()
+            error = torch.abs(y_pred - y_true).sum()
+
+            if error < min_error:
+                min_error = error
+                tau_opt = tau_candidate.item()
+
+        tau = tau_opt
+
+        # ---------- Step 3: compute M via OT split mass ratio ----------
+
+        n = len(self.train_structs)
+        idx = torch.randperm(n)
+        k = n // 2
+
+        idx1, idx2 = idx[:k], idx[k:]
+
+        S1 = [self.train_structs[i] for i in idx1]
+        S2 = [self.train_structs[i] for i in idx2]
+
+        F1 = self.featurizer(S1).to(self.device)
+        F2 = self.featurizer(S2).to(self.device)
+
+        M_cost = torch.cdist(F1, F2, p=2).cpu().numpy()
+
+        a = np.ones(len(S1)) / len(S1)
+        b = np.ones(len(S2)) / len(S2)
+
+        gamma = ot.emd(a, b, M_cost, numItermax=self.ot_num_itermax)
+
+        mask_close = M_cost <= tau
+        mask_far = M_cost > tau
+
+        p_close = np.sum(gamma[mask_close])
+        p_far = np.sum(gamma[mask_far])
+
+        M = p_far / max(p_close, 1e-8)
+
+        return tau, M
 
     def compute_novelty(self, gen_structures: Sequence):
         """

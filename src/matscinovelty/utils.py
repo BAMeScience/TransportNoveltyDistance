@@ -6,7 +6,7 @@ import pandas as pd
 import spglib
 import torch
 from pymatgen.analysis.local_env import MinimumDistanceNN
-from pymatgen.core import Lattice, Structure
+from pymatgen.core import Lattice, Structure, Element
 from pymatgen.core.operations import SymmOp
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
@@ -446,21 +446,20 @@ def augment_supercell(structure: Structure) -> Structure:
     return s
 
 
-
 def random_lattice_deformation(
     s: Structure,
     max_strain: float = 0.1,
-    shear_prob: float = 0.5,
     rng=None
 ) -> Structure:
     """
-    Apply a random lattice deformation (stretch + shear) to a Structure.
+    Apply a binary diagonal lattice strain:
+    50% chance of (1 - max_strain) and 50% chance of (1 + max_strain).
+    NO shear.
 
     Args:
         s (Structure): base structure.
-        max_strain (float): maximum magnitude of strain (~0.1 = 10%).
-        shear_prob (float): probability to include off-diagonal (shear) terms.
-        rng (np.random.Generator): optional RNG for reproducibility.
+        max_strain (float): strain magnitude (e.g. 0.1 = ±10%).
+        rng (np.random.Generator): optional RNG.
 
     Returns:
         Structure: distorted copy with same fractional coordinates.
@@ -468,29 +467,23 @@ def random_lattice_deformation(
     if rng is None:
         rng = np.random.default_rng()
 
-    A = s.lattice.matrix  # 3x3
+    A = s.lattice.matrix
 
-    # diagonal strain (stretch/compression along axes)
-    eps_diag = rng.uniform(-max_strain, max_strain, size=3)
-    F = np.diag(1.0 + eps_diag)
+    # choose expansion or compression for each axis
+    signs = rng.choice([-1, 1], size=3)
+    scale = 1.0 + signs * max_strain
 
-    # add shear components with some probability
-    if rng.random() < shear_prob:
-        shear = rng.uniform(-max_strain, max_strain, size=(3,3))
-        np.fill_diagonal(shear, 0.0)
-        F += shear
+    F = np.diag(scale)
 
     new_lat = A @ F
 
-    # build new structure
-    new_s = Structure(
+    return Structure(
         lattice=new_lat,
         species=[str(site.specie) for site in s.sites],
         coords=[site.frac_coords for site in s.sites],
         coords_are_cartesian=False
     )
 
-    return new_s
 
 
 def supercell_with_substitutions_list(structures, **kwargs):
@@ -532,6 +525,8 @@ def supercell_with_random_substitutions(
     if allowed_species is None:
         allowed_species = sorted({str(site.specie) for site in s.sites})
 
+    # add kation/anion??
+
     allowed_species = np.array(allowed_species, dtype=object)
 
     # --- Apply mutations ---
@@ -554,3 +549,90 @@ def supercell_with_random_substitutions(
 
     return mutated
 
+
+
+def random_supercell(
+    s: Structure,
+    p: float = 0.5,
+    rng=None,
+) -> Structure:
+    """
+    Randomly create a supercell with probability p using predefined scale matrices.
+
+    Args:
+        s: pymatgen Structure
+        p: probability to apply a supercell (otherwise structure is unchanged)
+        rng: numpy random generator
+
+    Returns:
+        New Structure (possibly expanded supercell)
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    scale_options = [
+        (2, 1, 1),
+        (1, 2, 1),
+        (1, 1, 2),
+        (2, 2, 1),
+        (1, 2, 2),
+        (2, 1, 2),
+        (2, 2, 2),
+    ]
+
+    new_struct = s.copy()
+
+    if rng.random() < p:
+        scale = rng.choice(scale_options)
+        new_struct.make_supercell(scale)
+
+    return new_struct
+
+def random_group_substitution(
+    s: Structure,
+    allowed_elements: set,
+    p: float = 0.05,
+    rng=None
+) -> Structure:
+    """
+    Randomly substitute atoms with same-group elements BUT only if they are
+    in the model-supported element list.
+
+    Args:
+        s: pymatgen Structure
+        allowed_elements: set of element symbols supported by the model
+        p: substitution probability per atom
+        rng: numpy random generator
+
+    Returns:
+        Safe substituted Structure
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    coords = np.array([site.frac_coords for site in s.sites])
+    old_species = np.array([str(site.specie) for site in s.sites], dtype=object)
+    new_species = old_species.copy()
+
+    mask = rng.random(len(old_species)) < p
+
+    for idx in np.where(mask)[0]:
+        elem = Element(old_species[idx])
+        group = elem.group
+
+        candidates = [
+            e.symbol for e in Element
+            if e.group == group
+            and e.symbol != elem.symbol
+            and e.symbol in allowed_elements
+        ]
+
+        if candidates:
+            new_species[idx] = rng.choice(candidates)
+
+    return Structure(
+        lattice=s.lattice,
+        species=new_species.tolist(),
+        coords=coords,
+        coords_are_cartesian=False,
+    )
