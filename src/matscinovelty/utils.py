@@ -102,7 +102,7 @@ def read_structure_from_csv(filename: str):
     return structures
 
 
-def structure_to_graph(structure, cutoff=8.0, num_rbf=32):
+def structure_to_graph(structure, cutoff=5.0, num_rbf=128):
     """
     Encode a pymatgen Structure as a torch_geometric Data graph. Adds node
     embeddings for atomic number, pairwise edges within `cutoff`, and RBF edge
