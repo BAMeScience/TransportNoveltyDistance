@@ -114,7 +114,7 @@ def structure_to_graph(structure, cutoff=8.0, num_rbf=32):
     z = torch.tensor([site.specie.Z for site in structure], dtype=torch.long)
     pos = torch.tensor(structure.cart_coords, dtype=torch.float)
 
-    mdnn = MinimumDistanceNN(cutoff=cutoff)
+    mdnn = MinimumDistanceNN(cutoff=cutoff, get_all_sites = True)
     centers = torch.linspace(0, cutoff, num_rbf)
     gamma = 10.0
 
