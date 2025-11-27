@@ -75,7 +75,6 @@ class BaseCrystalEncoder(nn.Module):
 
         return z.cpu()
 
-
 class EGNNLayer(nn.Module):
     """A lightweight EGNN block operating on invariant node features and positions."""
 
@@ -83,8 +82,9 @@ class EGNNLayer(nn.Module):
         self, in_features: int, hidden_features: int, edge_features: int = 0
     ) -> None:
         super().__init__()
+        input_dim = in_features * 2 + edge_features
         self.edge_mlp = nn.Sequential(
-            nn.Linear(in_features * 2 + 1 + edge_features, hidden_features),
+            nn.Linear(input_dim, hidden_features),
             nn.SiLU(),
             nn.Linear(hidden_features, hidden_features),
             nn.SiLU(),
@@ -98,18 +98,12 @@ class EGNNLayer(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        pos: torch.Tensor,
         edge_index: torch.Tensor,
         edge_attr=None,
     ):
         row, col = edge_index
-        rij = pos[row] - pos[col]
-        dij = (rij**2).sum(dim=-1, keepdim=True)
 
-        if edge_attr is not None:
-            edge_input = torch.cat([x[row], x[col], dij, edge_attr], dim=-1)
-        else:
-            edge_input = torch.cat([x[row], x[col], dij], dim=-1)
+        edge_input = torch.cat([x[row], x[col], edge_attr], dim=-1)
 
         m_ij = self.edge_mlp(edge_input)
 
@@ -126,9 +120,9 @@ class EquivariantCrystalGCN(BaseCrystalEncoder):
     def __init__(
         self,
         hidden_dim: int = 128,
-        num_rbf: int = 32,
+        num_rbf: int = 128,
         n_layers: int = 3,
-        cutoff: float = 8.0,
+        cutoff: float = 5.0,
     ) -> None:
         super().__init__(cutoff=cutoff, num_rbf=num_rbf)
         self.emb = nn.Embedding(100, hidden_dim)
@@ -142,14 +136,13 @@ class EquivariantCrystalGCN(BaseCrystalEncoder):
 
     def forward(self, data):
         x = self.emb(data.x).float()
-        pos = data.pos
         edge_index, edge_attr = data.edge_index, data.edge_attr
-
         for layer in self.layers:
-            x = layer(x, pos, edge_index, edge_attr)
+            x = layer(x, edge_index, edge_attr)
 
         x = global_mean_pool(x, data.batch)
         return self.lin(F.relu(x))
+
 
 
 class CGCNNEncoder(BaseCrystalEncoder):
