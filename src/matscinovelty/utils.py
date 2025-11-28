@@ -116,7 +116,7 @@ def structure_to_graph(structure, cutoff=5.0, num_rbf=128):
 
     mdnn = MinimumDistanceNN(cutoff=cutoff, get_all_sites = True)
     centers = torch.linspace(0, cutoff, num_rbf)
-    gamma = 10.0
+    gamma = 20.0
 
     edge_index, edge_attr, edge_weight, edge_shift = [], [], [], []
 
