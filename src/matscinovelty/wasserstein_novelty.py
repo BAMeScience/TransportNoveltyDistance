@@ -203,9 +203,9 @@ class TransportNoveltyDistance:
         S1 = [self.train_structs[i] for i in idx1]
         S2 = [self.train_structs[i] for i in idx2]
 
-        F1 = self.featurizer(S1).to(self.device)
-        F2 = self.featurizer(S2).to(self.device)
-
+        F1 = self.train_feats[idx1]
+        F2 = self.train_feats[idx2]
+        
         M_cost = torch.cdist(F1, F2, p=2).cpu().numpy()
 
         a = np.ones(len(S1)) / len(S1)
