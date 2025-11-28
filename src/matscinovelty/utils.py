@@ -486,71 +486,6 @@ def random_lattice_deformation(
 
 
 
-def supercell_with_substitutions_list(structures, **kwargs):
-    return [supercell_with_random_substitutions(s, **kwargs) for s in structures]
-
-
-
-def supercell_with_random_substitutions(
-    s: Structure,
-    scale_matrix=(3, 3, 3),
-    p_change=0.05,
-    allowed_species=None,
-    rng=None,
-) -> Structure:
-    """
-    Make a supercell, then randomly mutate atom species with probability p_change.
-
-    Args:
-        s: pymatgen Structure
-        scale_matrix: tuple or 3×3 matrix for Structure.make_supercell
-        p_change: probability that each atom changes species
-        allowed_species: list of species to choose from (default: species already present)
-        rng: numpy random generator
-
-    Returns:
-        New Structure with random substitutions (not swaps; stoichiometry changes)
-    """
-    if rng is None:
-        rng = np.random.default_rng()
-
-    # --- Make supercell ---
-    big = s.copy()
-    big.make_supercell(scale_matrix)
-
-    coords = np.array([site.frac_coords for site in big.sites])
-    old_species = np.array([str(site.specie) for site in big.sites], dtype=object)
-
-    # Allowed replacement species
-    if allowed_species is None:
-        allowed_species = sorted({str(site.specie) for site in s.sites})
-
-    # add kation/anion??
-
-    allowed_species = np.array(allowed_species, dtype=object)
-
-    # --- Apply mutations ---
-    new_species = old_species.copy()
-    mask = rng.random(len(new_species)) < p_change
-
-    # For each atom flagged for mutation, choose a random species different from current
-    for idx in np.where(mask)[0]:
-        choices = allowed_species[allowed_species != old_species[idx]]
-        if len(choices) > 0:
-            new_species[idx] = rng.choice(choices)
-
-    # --- Build final structure ---
-    mutated = Structure(
-        lattice=big.lattice,
-        species=new_species.tolist(),
-        coords=coords,
-        coords_are_cartesian=False,
-    )
-
-    return mutated
-
-
-
 def random_supercell(
     s: Structure,
     p: float = 0.5,
@@ -588,7 +523,54 @@ def random_supercell(
 
     return new_struct
 
+
 def random_group_substitution(
+    s: Structure,
+    allowed_elements: set,
+    p: float = 0.05,
+    rng=None
+) -> Structure:
+    """
+    Randomly substitute atoms with same-group elements BUT only if they are
+    in the model-supported element list.
+
+    Args:
+        s: pymatgen Structure
+        allowed_elements: set of element symbols supported by the model
+        p: substitution probability per atom
+        rng: numpy random generator
+
+    Returns:
+        Safe substituted Structure
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    coords = np.array([site.frac_coords for site in s.sites])
+    old_species = np.array([str(site.specie) for site in s.sites], dtype=object)
+    new_species = old_species.copy()
+
+    mask = rng.random(len(old_species)) < p
+
+    for idx in np.where(mask)[0]:
+        elem = Element(old_species[idx])
+        group = elem.group
+        candidates = [
+            e for e in allowed_elements
+            if Element(e).group == elem.group and e != elem.symbol
+        ]
+
+        if candidates:
+            new_species[idx] = rng.choice(candidates)
+
+    return Structure(
+        lattice=s.lattice,
+        species=new_species.tolist(),
+        coords=coords,
+        coords_are_cartesian=False,
+    )
+
+def random_substitution(
     s: Structure,
     allowed_elements: set,
     p: float = 0.05,
@@ -621,10 +603,8 @@ def random_group_substitution(
         group = elem.group
 
         candidates = [
-            e.symbol for e in Element
-            if e.group == group
-            and e.symbol != elem.symbol
-            and e.symbol in allowed_elements
+            e for e in allowed_elements
+            if e != elem.symbol
         ]
 
         if candidates:
