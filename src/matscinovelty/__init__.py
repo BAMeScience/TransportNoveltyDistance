@@ -33,6 +33,7 @@ from .utils import (  # noqa: E402
     random_lattice_deformation,
     random_supercell,
     random_group_substitution,
+    random_substitution, 
     supercell_with_random_substitutions,
     supercell_with_substitutions_list,
     read_csv,
