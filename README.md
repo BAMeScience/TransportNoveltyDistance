@@ -3,6 +3,7 @@
 **The distributional metric for crystal generative models.**
 
 TNovD evaluates **novelty** and **quality** simultaneously by combining contrastive GNN embeddings with Optimal Transport (OT). It solves the "validity vs. uniqueness" trade-off common in generative materials science.
+<img width="2348" height="1625" alt="TNovD_workflow_overview" src="https://github.com/user-attachments/assets/c4da9b60-187c-4a22-9f5a-44900d2402be" />
 
 ### Why TNovD?
 
@@ -17,12 +18,11 @@ TNovD evaluates **novelty** and **quality** simultaneously by combining contrast
 ### 🧠 How it Works
 
 Based on Optimal Transport theory, TNovD finds a minimum-cost matching between the distribution of generated structures and the training set within a chemically aware feature space.
+We aim at detecting memorization and quality, combined in one **distributional** score. 
 
-<div align="center">
-<img width="100%" alt="TNovD_workflow_overview" src="https://github.com/user-attachments/assets/ef82a791-95c2-4534-add0-12f0d9048c58" />
-</div>
 
-The repository ships as an installable Python package (`matscinovelty`). All core logic is exposed as importable modules, while exploratory notebooks and drivers remain as scripts.
+
+The repository ships as an installable Python package (`TNovD`). All core logic is exposed as importable modules, the papers experiments can be reproduced via the experiments folder!
 
 ---
 
@@ -46,50 +46,61 @@ pip install -e .
 Calculate the novelty score for a generated dataset against a training baseline.
 
 ```python
-from pathlib import Path
 import pandas as pd
 import torch
-from matscinovelty import (
+from pathlib import Path
+
+# 1. New Imports from TNovD package
+from TNovD import (
     EquivariantCrystalGCN,
-    OTNoveltyScorer,
-    load_structures_from_json_column,
+    TransportNoveltyDistance,
     read_structure_from_csv,
+    load_structures_from_json_column
 )
 
-# 1. Load Data
+# Setup device
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# 2. Load Data
 DATA_DIR = Path("data/mp_20")
 train_structs = read_structure_from_csv(DATA_DIR / "train.csv")
+
+# Assuming 'mattergen.csv' has a JSON column for structures
 gen_structs = load_structures_from_json_column(pd.read_csv("data_models/mattergen.csv"))
 
-# 2. Load the Pre-trained Metric Model
-model = EquivariantCrystalGCN(hidden_dim=32)
-model.load_state_dict(torch.load("checkpoints/gcn_.pt"))
+# 3. Load the Pre-trained Metric Model
+# Note: Added num_rbf=128 to match your toy.py config
+model = EquivariantCrystalGCN(hidden_dim=32, num_rbf=128).to(device)
+model.load_state_dict(torch.load("checkpoints/gcn_mp20_final.pt", map_location=device))
 
-# 3. Compute TNovD
-We have our own methods for calibration of $\tau$ and M, as described in our paper. Our method automatically calls these, if not provided. 
-scorer = OTNoveltyScorer(
-    train_structs, 
-    gnn_model=model)
+# 4. Compute TNovD
+# Class renamed: OTNoveltyScorer -> TransportNoveltyDistance
+scorer = TransportNoveltyDistance(
+    train_structures=train_structs,
+    gnn_model=model,
+    device=device  # Good practice to pass device explicitly
+)
 
-total, quality, memorization = scorer.compute_novelty(gen_structs)
+# Method renamed: compute_novelty -> compute_TNovD
+total, quality, memorization = scorer.compute_TNovD(gen_structs)
+
 print(f"Total TNovD: {total:.4f} | Quality: {quality:.4f} | Memorization: {memorization:.4f}")
 ```
 
 ### 2. Train the Encoder
-Train your own equivariant encoder if you aren't using the provided checkpoints.
+Train your own equivariant encoder if you aren't using the provided checkpoints (for instance if you want different positives or negatives, or try a different architecture!).
 
-```python
-from pathlib import Path
-from matscinovelty.gcn import train_contrastive_model
-
-DATA_DIR = Path("data/mp_20")
+from TNovD import EquivariantCrystalGCN
+from TNovD.gcn import train_contrastive_model
 
 train_contrastive_model(
-    str(DATA_DIR / "train.csv"),
-    val_csv=str(DATA_DIR / "val.csv"),
-    epochs=10,
+    "data/mp_20/train.csv",
+    val_csv="data/mp_20/val.csv",
     checkpoint_path="checkpoints/equivariant.pt",
     plot_path="imgs/validation_curve.png",
+    epochs=10,
+    # Define the model construction inline
+    model_builder=lambda: EquivariantCrystalGCN(hidden_dim=32, num_rbf=32, n_layers=3)
 )
 ```
 
@@ -112,6 +123,10 @@ python experiments/model_eval.py
 
 ### 📂 Data
 Scripts for downloading MP20, WBM, and generated model outputs can be found in the `downloads/` subfolder.
+
+### 🤝 Contributing
+
+If you have any issues with the code, or have new ideas on how we can improve this package, please create a GitHub Issue. PRs are also very welcome! The code is still researchy, so feedback is appreciated.
 
 ## 📜 Citation
 TBD
