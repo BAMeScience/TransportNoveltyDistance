@@ -1,4 +1,5 @@
-# MatSciNovelty
+# Transport Novelty Distance
+
 
 Reusable tooling for training equivariant GNN encoders on inorganic crystal datasets and benchmarking generative models with the OT-based novelty metric introduced in the accompanying research.
 
