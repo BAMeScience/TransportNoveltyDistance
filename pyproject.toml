@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "matscinovelty"
+name = "TNovD"
 version = "0.1.0"
-description = "MatSciNovelty: OT-based novelty scoring using GNN encoders for materials discovery."
+description = "TransportNoveltyDistance: OT-based quality and novelty scoring using GNN encoders for materials discovery."
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}

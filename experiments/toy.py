@@ -7,19 +7,14 @@ import torch
 from numpy.exceptions import ComplexWarning
 import pickle
 
-from matscinovelty import (
+from TNovD import (
     EquivariantCrystalGCN,
     TransportNoveltyDistance,
-    augment,
-    augment_supercell,
     random_lattice_deformation,
-    supercell_with_random_substitutions,
-    supercell_with_substitutions_list,
     random_group_substitution,
     random_group_substitution,
     random_supercell,
     random_substitution,
-    perturb_structures_corrupt,
     perturb_structures_gaussian,
     read_structure_from_csv,
 )
@@ -46,7 +41,7 @@ del val_structs[232]  # remove broken entry if needed
 # --- Load pretrained model ---
 print("Loading pretrained GCN model...")
 model = EquivariantCrystalGCN(hidden_dim=32, num_rbf = 128).to(device)
-checkpoint_path = CHECKPOINTS_DIR / "egnn_invariant_mp20.pt"
+checkpoint_path = CHECKPOINTS_DIR / "gcn_mp20_final.pt"
 model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 print("Loaded pretrained weights.✅")
 
@@ -62,9 +57,9 @@ scores = []
 
 print("\n=== Gaussian Noise Experiment ===")
 for sigma in sigmas:
-    pert = perturb_structures_gaussian(val_structs, sigma=sigma, teleport_prob=0.0)
-    score, *_ = scorer.compute_novelty(pert)
-    print(f"sigma={sigma:.3f} -> TND={score:.4f}")
+    pert = perturb_structures_gaussian(val_structs, sigma=sigma)
+    score, *_ = scorer.compute_TNovD(pert)
+    print(f"sigma={sigma:.3f} -> TNovD={score:.4f}")
     scores.append(score)
 
 with open(PICKLE_DIR/"gauss.pkl", "wb") as f:
@@ -74,7 +69,7 @@ plt.figure(figsize=(8, 5))
 plt.plot(sigmas, scores, marker="o")
 plt.xlabel("Gaussian σ")
 plt.ylabel("Transport Novelty Distance")
-plt.title("TND vs Gaussian Noise")
+plt.title("TNovD vs Gaussian Noise")
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(IMGS_DIR / "toy_gaussian.png", dpi=300)
@@ -90,8 +85,8 @@ scores = []
 print("\n=== Random Binary Lattice Strain Experiment ===")
 for eps in strains:
     pert = [random_lattice_deformation(s, max_strain=eps) for s in val_structs]
-    score, *_ = scorer.compute_novelty(pert)
-    print(f"strain={eps:.3f} -> TND={score:.4f}")
+    score, *_ = scorer.compute_TNovD(pert)
+    print(f"strain={eps:.3f} -> TNovD={score:.4f}")
     scores.append(score)
 
 
@@ -102,7 +97,7 @@ plt.figure(figsize=(8, 5))
 plt.plot(strains, scores, marker="o")
 plt.xlabel("Binary Lattice Strain Magnitude")
 plt.ylabel("Transport Novelty Distance")
-plt.title("TND vs Binary Lattice Strain")
+plt.title("TNovD vs Binary Lattice Strain")
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(IMGS_DIR / "toy_binary_lattice.png", dpi=300)
@@ -118,8 +113,8 @@ scores = []
 print("\n=== Random Supercell Experiment ===")
 for p in probs:
     pert = [random_supercell(s, p=p) for s in val_structs]
-    score, *_ = scorer.compute_novelty(pert)
-    print(f"p_supercell={p:.3f} -> TND={score:.4f}")
+    score, *_ = scorer.compute_TNovD(pert)
+    print(f"p_supercell={p:.3f} -> TNovD={score:.4f}")
     scores.append(score)
 
 
@@ -131,7 +126,7 @@ plt.plot(probs, scores, marker="o")
 plt.xlabel("Supercell Probability")
 plt.ylabel("Transport Novelty Distance")
 plt.ylim(0.0, 1.0)
-plt.title("TND vs Random Supercell Probability")
+plt.title("TNovD vs Random Supercell Probability")
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(IMGS_DIR / "toy_supercell_prob.png", dpi=300)
@@ -152,8 +147,8 @@ scores = []
 print("\n=== Random Same-Group Substitution Experiment ===")
 for p in probs:
     pert = [random_group_substitution(s, allowed_elements, p=p) for s in val_structs]
-    score, *_ = scorer.compute_novelty(pert)
-    print(f"p_group_sub={p:.3f} -> TND={score:.4f}")
+    score, *_ = scorer.compute_TNovD(pert)
+    print(f"p_group_sub={p:.3f} -> TNovD={score:.4f}")
     scores.append(score)
 
 
@@ -164,7 +159,7 @@ plt.figure(figsize=(8, 5))
 plt.plot(probs, scores, marker="o")
 plt.xlabel("Same-Group Substitution Probability")
 plt.ylabel("Transport Novelty Distance")
-plt.title("TND vs Group Substitution")
+plt.title("TNovD vs Group Substitution")
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(IMGS_DIR / "toy_group_substitution.png", dpi=300)
@@ -176,8 +171,8 @@ scores = []
 print("\n=== Random Substitution Experiment ===")
 for p in probs:
     pert = [random_substitution(s, allowed_elements, p=p) for s in val_structs]
-    score, *_ = scorer.compute_novelty(pert)
-    print(f"p_group_sub={p:.3f} -> TND={score:.4f}")
+    score, *_ = scorer.compute_TNovD(pert)
+    print(f"p_group_sub={p:.3f} -> TNovD={score:.4f}")
     scores.append(score)
 
 
@@ -188,7 +183,7 @@ plt.figure(figsize=(8, 5))
 plt.plot(probs, scores, marker="o")
 plt.xlabel("Substitution Probability")
 plt.ylabel("Transport Novelty Distance")
-plt.title("TND vs Substitution")
+plt.title("TNovD vs Substitution")
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(IMGS_DIR / "toy_substitution.png", dpi=300)
@@ -214,8 +209,8 @@ for f in shared_fracs:
     else:
         mixed = val_structs
 
-    score, *_ = scorer.compute_novelty(mixed)
-    print(f"shared={f:.3f} -> TND={score:.4f}")
+    score, *_ = scorer.compute_TNovD(mixed)
+    print(f"shared={f:.3f} -> TNovD={score:.4f}")
     scores.append(score)
 
 
@@ -226,7 +221,7 @@ plt.figure(figsize=(8, 5))
 plt.plot(shared_fracs, scores, marker="o", color="crimson")
 plt.xlabel("Fraction of Training Samples Reinserted")
 plt.ylabel("Transport Novelty Distance")
-plt.title("TND vs Data Leakage")
+plt.title("TNovD vs Data Leakage")
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(IMGS_DIR / "toy_data_leakage.png", dpi=300)

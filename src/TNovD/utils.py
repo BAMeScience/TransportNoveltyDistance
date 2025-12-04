@@ -213,155 +213,10 @@ def coverage_score(train_feats, gen_feats, threshold=0.05):
 
 
 
-def perturb_structures(
-    original_structures, mode="lattice_scale", strength=0.1, rng=None
-):
-    """
-    Apply perturbations to a list of pymatgen Structures.
-
-    Args:
-        original_structures (list[Structure]): input structures.
-        mode (str): type of perturbation. One of:
-            - "lattice_scale" : uniform lattice scaling
-            - "shear"         : random lattice shear/strain
-            - "clash"         : move one atom towards another to create overlap
-            - "vacancies"     : remove random sites
-        strength (float): magnitude parameter (interpreted per mode).
-        rng (np.random.Generator or None): RNG.
-
-    Returns:
-        list[Structure]
-    """
-    if rng is None:
-        rng = np.random.default_rng()
-
-    perturbed = []
-
-    for s in original_structures:
-        if mode == "lattice_scale":
-            # scale lattice uniformly
-            new_lat = s.lattice.matrix * strength
-            new = Structure(
-                lattice=new_lat,
-                species=[site.species for site in s.sites],
-                coords=[site.frac_coords for site in s.sites],
-                coords_are_cartesian=False,
-            )
-
-        elif mode == "shear":
-            # random shear/strain
-            A = s.lattice.matrix
-            S = np.eye(3) + strength * rng.standard_normal((3, 3))
-            new_lat = A @ S
-            new = Structure(
-                lattice=new_lat,
-                species=[site.species for site in s.sites],
-                coords=[site.frac_coords for site in s.sites],
-                coords_are_cartesian=False,
-            )
-
-        elif mode == "clash":
-            # force atomic clashes
-            if len(s) < 2:
-                new = s.copy()
-            else:
-                i, j = 0, 1
-                v = (s[j].frac_coords - s[i].frac_coords) % 1.0
-                new_coords = []
-                for idx, site in enumerate(s.sites):
-                    if idx == j:
-                        pert = (site.frac_coords - strength * v) % 1.0
-                        new_coords.append(pert)
-                    else:
-                        new_coords.append(site.frac_coords)
-
-                new = Structure(
-                    lattice=s.lattice,
-                    species=[site.species for site in s.sites],
-                    coords=new_coords,
-                    coords_are_cartesian=False,
-                )
-
-        elif mode == "vacancies":
-            # remove random sites
-            n_remove = max(1, int(strength * len(s)))
-            idx_remove = rng.choice(len(s), size=n_remove, replace=False)
-
-            new_coords, new_species = [], []
-            for idx, site in enumerate(s.sites):
-                if idx not in idx_remove:
-                    new_coords.append(site.frac_coords)
-                    new_species.append(site.species)
-
-            new = Structure(
-                lattice=s.lattice,
-                species=new_species,
-                coords=new_coords,
-                coords_are_cartesian=False,
-            )
-
-        else:
-            raise ValueError(f"Unknown perturbation mode: {mode}")
-
-        perturbed.append(new)
-
-    return perturbed
-
-
-def perturb_structures_corrupt(
-    original_structures, vacancy_prob=0.1, swap_prob=0.1, rng=None
-):
-    """
-    Perturb structures by introducing vacancies and random atom swaps.
-
-    Ensures that at least 2 atoms remain, so neighbor-finding won't crash.
-    """
-    if rng is None:
-        rng = np.random.default_rng()
-
-    perturbed_structures = []
-    all_species = list({str(sp) for s in original_structures for sp in s.species})
-
-    for original in original_structures:
-        new_coords = []
-        new_species = []
-
-        for site in original.sites:
-            # --- vacancy ---
-            if rng.random() < vacancy_prob:
-                continue
-
-            sp = str(site.specie)
-
-            # --- swap species ---
-            if rng.random() < swap_prob:
-                sp = rng.choice(all_species)
-
-            new_species.append(sp)
-            new_coords.append(site.frac_coords)
-
-        # --- safeguard: keep at least 2 atoms ---
-        if len(new_species) < 2:
-            # take first two sites from the original
-            for site in original.sites[:2]:
-                if len(new_species) >= 2:
-                    break
-                new_species.append(str(site.specie))
-                new_coords.append(site.frac_coords)
-
-        perturbed = Structure(
-            lattice=original.lattice,
-            species=new_species,
-            coords=new_coords,
-            coords_are_cartesian=False,
-        )
-        perturbed_structures.append(perturbed)
-
-    return perturbed_structures
 
 
 def perturb_structures_gaussian(
-    original_structures, sigma=0.05, teleport_prob=0.0, rng=None
+    original_structures, sigma=0.05, rng=None
 ):
     """
     Intentionally unphysical perturbations in fractional space using Gaussian noise,
@@ -388,13 +243,10 @@ def perturb_structures_gaussian(
         for site in original.sites:
             u = np.asarray(site.frac_coords, dtype=float)
 
-            if teleport_prob > 0 and rng.random() < teleport_prob:
-                # Maximal disturbance: uniform position in fractional cell
-                pert = rng.random(3)
-            else:
+  
                 # Gaussian noise in fractional space, then wrap to [0,1)
-                noise = rng.normal(0.0, sigma, size=3)
-                pert = (u + noise) % 1.0
+            noise = rng.normal(0.0, sigma, size=3)
+            pert = (u + noise) % 1.0
 
             new_coords.append(pert)
 

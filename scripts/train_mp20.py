@@ -4,8 +4,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from matscinovelty import CGCNNEncoder, SchNetEncoder, EquivariantCrystalGCN
-from matscinovelty.gcn import train_contrastive_model
+from TNovD import EquivariantCrystalGCN
+from TNovD.gcn import train_contrastive_model
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "mp_20"
@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        choices=("equivariant", "cgc", "schnet"),
+        choices=("equivariant"),
         default="equivariant",
         help="Backbone architecture to train.",
     )
@@ -125,20 +125,7 @@ def main() -> None:
                 num_rbf=args.num_rbf,
                 n_layers=args.n_layers,
             )
-        if args.model == "cgc":
-            return lambda: CGCNNEncoder(
-                hidden_dim=args.hidden_dim,
-                num_rbf=args.num_rbf,
-                num_layers=args.n_layers,
-            )
-        if args.model == "schnet":
-            return lambda: SchNetEncoder(
-                embedding_dim=args.hidden_dim,
-                hidden_channels=args.hidden_dim,
-                num_gaussians=args.num_rbf,
-                num_interactions=args.n_layers,
-            )
-        raise ValueError(f"Unknown model type: {args.model}")
+        raise ValueError(f"Unknown model architecture: {args.model}")
 
     model_builder = make_model_builder()
 

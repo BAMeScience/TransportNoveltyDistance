@@ -7,10 +7,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from matscinovelty import (
+from TNovD import (
     EquivariantCrystalGCN,
-    CGCNNEncoder,
-    SchNetEncoder,
     TransportNoveltyDistance,
     canonicalize_structure,
     coverage_score,
@@ -43,14 +41,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        choices=("equivariant", "cgc", "schnet"),
+        choices=("equivariant"),
         default="equivariant",
         help="Trained backbone architecture.",
     )
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=CHECKPOINTS_DIR / "gcn_mp20.pt",
+        default=CHECKPOINTS_DIR / "gcn_mp20_final.pt",
         help="Path to the encoder checkpoint (default: checkpoints/egnn_invariant_mp20.pt).",
     )
     return parser.parse_args()
@@ -119,7 +117,7 @@ checkpoint_path = args.checkpoint
 device = "cuda" if torch.cuda.is_available() else "cpu"
 # --- Load pretrained model ---
 print("Loading pretrained GCN model...")
-model = EquivariantCrystalGCN(hidden_dim=128).to(device)
+model = EquivariantCrystalGCN(hidden_dim=32).to(device)
 model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 print("Loaded weights from gcn_fine.pt ✅")
 
@@ -138,7 +136,7 @@ scores_novelty, scores_coverage = [], []
 
 for name, structs in zip(model_names, structure_list):
     print(f"\n▶ Evaluating {name}")
-    total, qual, mem = scorer.compute_novelty(structs)
+    total, qual, mem = scorer.compute_TNovD(structs)
     print(f"  {name}: Total={total:.4f} | Quality={qual:.4f} | Memorization={mem:.4f}")
     scores_total.append(total)
     scores_quality.append(qual)

@@ -223,7 +223,7 @@ class TransportNoveltyDistance:
 
         return tau, M
 
-    def compute_novelty(self, gen_structures: Sequence):
+    def compute_TNovD(self, gen_structures: Sequence):
         """
         Compute the total OT-based novelty loss alongside its quality/memorization parts.
 

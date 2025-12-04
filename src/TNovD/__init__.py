@@ -1,5 +1,5 @@
 """
-High-level package exports for MatSciNovelty.
+High-level package exports for Transport Novelty Distance.
 """
 
 import warnings
@@ -11,10 +11,8 @@ warnings.filterwarnings(
 )
 
 from .gcn import (  # noqa: E402
-    CGCNNEncoder,
     EGNNLayer,
     EquivariantCrystalGCN,
-    SchNetEncoder,
     info_nce_loss,
     train_contrastive_model,
     validate,
@@ -27,26 +25,21 @@ from .utils import (  # noqa: E402
     coverage_score,
     load_structures_from_json_column,
     novelty_score,
-    perturb_structures,
-    perturb_structures_corrupt,
     perturb_structures_gaussian,
     random_lattice_deformation,
     random_supercell,
     random_group_substitution,
     random_substitution, 
-    supercell_with_random_substitutions,
-    supercell_with_substitutions_list,
     read_csv,
     read_structure_from_csv,
     structure_to_graph,
 )
-from .wasserstein_novelty import TransportNoveltyDistance
+from .TransportNoveltyDistance import TransportNoveltyDistance
 
 __all__ = [
     "CGCNNEncoder",
     "EGNNLayer",
     "EquivariantCrystalGCN",
-    "SchNetEncoder",
     "canonicalize_structure",
     "info_nce_loss",
     "train_contrastive_model",
@@ -57,8 +50,6 @@ __all__ = [
     "load_structures_from_json_column",
     "load_wyckoff_structures",
     "novelty_score",
-    "perturb_structures",
-    "perturb_structures_corrupt",
     "perturb_structures_gaussian",
     "read_csv",
     "read_structure_from_csv",
