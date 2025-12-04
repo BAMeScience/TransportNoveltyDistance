@@ -1,25 +1,25 @@
-# 🚀 Transport Novelty Distance (TND)
+# 🚀 Transport Novelty Distance (TNovD)
 
 **The distributional metric for crystal generative models.**
 
-TND evaluates **novelty** and **quality** simultaneously by combining contrastive GNN embeddings with Optimal Transport (OT). It solves the "validity vs. uniqueness" trade-off common in generative materials science.
+TNovD evaluates **novelty** and **quality** simultaneously by combining contrastive GNN embeddings with Optimal Transport (OT). It solves the "validity vs. uniqueness" trade-off common in generative materials science.
 
-### Why TND?
+### Why TNovD?
 
-> ❌ **Memorization:** If your model copies training data, TND penalizes it.
+> ❌ **Memorization:** If your model copies training data, TNovD penalizes it.
 >
-> ❌ **Hallucination:** If your model generates chemically invalid nonsense, TND penalizes it.
+> ❌ **Hallucination:** If your model generates chemically invalid nonsense, TNovD penalizes it.
 >
-> ✅ **Generalization:** If your model creates *new*, *stable* crystals, TND rewards it.
+> ✅ **Generalization:** If your model creates *new*, *stable* crystals, TNovD rewards it.
 
 ---
 
 ### 🧠 How it Works
 
-Based on Optimal Transport theory, TND finds a minimum-cost matching between the distribution of generated structures and the training set within a chemically aware feature space.
+Based on Optimal Transport theory, TNovD finds a minimum-cost matching between the distribution of generated structures and the training set within a chemically aware feature space.
 
 <div align="center">
-<img width="100%" alt="TND_workflow_overview" src="https://github.com/user-attachments/assets/ef82a791-95c2-4534-add0-12f0d9048c58" />
+<img width="100%" alt="TNovD_workflow_overview" src="https://github.com/user-attachments/assets/ef82a791-95c2-4534-add0-12f0d9048c58" />
 </div>
 
 The repository ships as an installable Python package (`matscinovelty`). All core logic is exposed as importable modules, while exploratory notebooks and drivers remain as scripts.
@@ -63,20 +63,16 @@ gen_structs = load_structures_from_json_column(pd.read_csv("data_models/matterge
 
 # 2. Load the Pre-trained Metric Model
 model = EquivariantCrystalGCN(hidden_dim=32)
-model.load_state_dict(torch.load("checkpoints/gcn_fine.pt"))
+model.load_state_dict(torch.load("checkpoints/gcn_.pt"))
 
-# 3. Compute TND
-# 'tau' controls the transport regularization
+# 3. Compute TNovD
+We have our own methods for calibration of $\tau$ and M, as described in our paper. Our method automatically calls these, if not provided. 
 scorer = OTNoveltyScorer(
     train_structs, 
-    gnn_model=model, 
-    device="cpu", 
-    tau=0.36, 
-    memorization_weight=10.0
-)
+    gnn_model=model)
 
 total, quality, memorization = scorer.compute_novelty(gen_structs)
-print(f"Total TND: {total:.4f} | Quality: {quality:.4f} | Memorization: {memorization:.4f}")
+print(f"Total TNovD: {total:.4f} | Quality: {quality:.4f} | Memorization: {memorization:.4f}")
 ```
 
 ### 2. Train the Encoder
@@ -105,10 +101,9 @@ Reusable experiment drivers are located in the `experiments/` directory. Each sc
 
 | Script | Description |
 | :--- | :--- |
-| `experiments/model_eval.py` | Full comparison against multiple Wyckoff-based generative models. |
-| `experiments/mattergen_eval.py` | Focused evaluation for MatterGen variants. |
-| `experiments/toy.py` | Perturbation sweeps showing how TND reacts to synthetic corruptions. |
-| `experiments/wbm_exp.py` | Tracks novelty across WBM optimization stages. |
+| `experiments/model_eval.py` | Comparison of common material generative models in TNovD. |
+| `experiments/toy.py` | Perturbation sweeps showing how TNovD reacts to synthetic corruptions. |
+| `experiments/wbm_exp.py` | TNovD for WBM dataset. |
 
 **Run an experiment:**
 ```bash
