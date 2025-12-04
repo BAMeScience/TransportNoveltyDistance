@@ -1,4 +1,5 @@
 # Transport Novelty Distance
+<img width="2348" height="1625" alt="TND_workflow_overview_v4" src="https://github.com/user-attachments/assets/ef82a791-95c2-4534-add0-12f0d9048c58" />
 
 
 Reusable tooling for training equivariant GNN encoders on inorganic crystal datasets and benchmarking generative models with the OT-based novelty metric introduced in the accompanying research.
