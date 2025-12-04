@@ -78,8 +78,6 @@ def load_structures_for_step(step: int, summary_df: pd.DataFrame, stable: bool =
     suffix = "-stable" if stable else ""
     path = WBM_DIR / f"wbm-structures-step-{step}{suffix}.json"
     if not path.exists():
-        if step == 0:
-            return []  # Return empty so it uses MP20 data instead
         if stable:
             print(f"⚠ Missing stable file for step {step}; skipping.")
             return []
