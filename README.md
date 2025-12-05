@@ -43,7 +43,7 @@ pip install -e .
 ## ⚡ Quick Start
 
 ### 1. Score a Generative Model
-Calculate the novelty score for a generated dataset (here: MatterGen) against a training baseline (here: MP20). All data for the quick start is downloadable via their respective download scripts in the scripts folder.
+Calculate the novelty score for a generated dataset (here: MatterGen) against a training baseline (here: MP20).
 
 ```python
 import pandas as pd
@@ -87,7 +87,8 @@ print(f"Total TNovD: {total:.4f} | Quality: {quality:.4f} | Memorization: {memor
 ```
 
 ### 2. Train the Encoder
-Train your own equivariant encoder if you aren't using the provided checkpoints (for instance if you want different positives or negatives, or try a different architecture!).
+Train your own equivariant encoder if you aren't using the provided checkpoints (for instance if you want different positives or negatives, or try a different architecture). The feature space dimensions can be adapted by changing hidden_dim argument.
+
 ```python
 from TNovD import EquivariantCrystalGCN
 from TNovD.gcn import train_contrastive_model
