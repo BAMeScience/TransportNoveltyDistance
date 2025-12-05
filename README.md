@@ -11,18 +11,18 @@ TNovD evaluates **novelty** and **quality** simultaneously by combining contrast
 >
 > ❌ **Hallucination:** If your model generates chemically invalid nonsense, TNovD penalizes it.
 >
-> ✅ **Generalization:** If your model creates *new*, *stable* crystals, TNovD rewards it.
+> ✅ **Generalization:** If your model creates *new*, *reasonable* crystals, TNovD rewards it.
 
 ---
 
 ### 🧠 How it Works
 
-Based on Optimal Transport theory, TNovD finds a minimum-cost matching between the distribution of generated structures and the training set within a chemically aware feature space.
+Based on Optimal Transport theory, TNovD finds a minimum-cost matching between the distribution of generated structures and the training set within a chemically and structurally aware feature space.
 We aim at detecting memorization and quality, combined in one **distributional** score. 
 
 
 
-The repository ships as an installable Python package (`TNovD`). All core logic is exposed as importable modules, the papers experiments can be reproduced via the experiments folder!
+The repository ships as an installable Python package (`TNovD`). All core logic is exposed as importable modules, the papers experiments can be reproduced via the experiments folder.
 
 ---
 
