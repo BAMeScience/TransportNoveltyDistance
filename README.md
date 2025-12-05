@@ -43,7 +43,7 @@ pip install -e .
 ## ⚡ Quick Start
 
 ### 1. Score a Generative Model
-Calculate the novelty score for a generated dataset against a training baseline.
+Calculate the novelty score for a generated dataset (here: MatterGen) against a training baseline (here: MP20). All data for the quick start is downloadable via their respective download scripts in the scripts folder.
 
 ```python
 import pandas as pd
