@@ -71,9 +71,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR =  PROJECT_ROOT / "data" / "mp_20"
 DATA_XTALMET = PROJECT_ROOT / "data" / "xtalmet_models"
 
+# Load the structures used to train the generative model
 train_structs = read_structure_from_csv(DATA_DIR / "train.csv")
 
-# Assuming 'mattergen.csv' has a JSON column for structures
+# Load the generated structures 
 with open(DATA_XTALMET / "mattergen.pkl", "rb") as f:
     gen_structs = pickle.load(f)
 
