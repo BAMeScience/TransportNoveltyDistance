@@ -3,6 +3,7 @@
 **The distributional metric for crystal generative models.**
 
 TNovD evaluates **novelty** and **quality** simultaneously by combining contrastive GNN embeddings with Optimal Transport (OT). It solves the "validity vs. uniqueness" trade-off common in generative materials science.
+
 <img width="2348" height="1625" alt="TNovD_workflow_overview" src="https://github.com/user-attachments/assets/c4da9b60-187c-4a22-9f5a-44900d2402be" />
 
 ### Why TNovD?
