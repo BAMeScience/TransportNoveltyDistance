@@ -29,7 +29,11 @@ The repository ships as an installable Python package (`TNovD`). All core logic 
 ## 🔧 Installation
 
 ```bash
-# Create environment
+# Navigate to the respective project folder, then clone this repository
+git clone https://github.com/BAMeScience/MatSciNovelty.git
+
+# Create python environment
+cd MatSciNovelty
 python -m venv .venv
 source .venv/bin/activate
 
