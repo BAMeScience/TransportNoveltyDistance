@@ -69,7 +69,6 @@ train_structs = read_structure_from_csv(DATA_DIR / "train.csv")
 gen_structs = load_structures_from_json_column(pd.read_csv("data_models/mattergen.csv"))
 
 # 3. Load the Pre-trained Metric Model
-# Note: Added num_rbf=128 to match your toy.py config
 model = EquivariantCrystalGCN(hidden_dim=32, num_rbf=128).to(device)
 model.load_state_dict(torch.load("checkpoints/gcn_mp20_final.pt", map_location=device))
 
@@ -89,7 +88,7 @@ print(f"Total TNovD: {total:.4f} | Quality: {quality:.4f} | Memorization: {memor
 
 ### 2. Train the Encoder
 Train your own equivariant encoder if you aren't using the provided checkpoints (for instance if you want different positives or negatives, or try a different architecture!).
-
+```python
 from TNovD import EquivariantCrystalGCN
 from TNovD.gcn import train_contrastive_model
 
@@ -104,7 +103,6 @@ train_contrastive_model(
 )
 ```
 
----
 
 ## 🧪 Experiments
 
