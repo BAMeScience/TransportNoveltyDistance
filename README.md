@@ -67,15 +67,19 @@ from TNovD import (
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # 2. Load Data
-DATA_DIR = Path("data/mp_20")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR =  PROJECT_ROOT / "data" / "mp_20"
+DATA_XTALMET = PROJECT_ROOT / "data" / "xtalmet_models"
+
 train_structs = read_structure_from_csv(DATA_DIR / "train.csv")
 
 # Assuming 'mattergen.csv' has a JSON column for structures
-gen_structs = load_structures_from_json_column(pd.read_csv("data_models/mattergen.csv"))
+with open(DATA_XTALMET / "mattergen.pkl", "rb") as f:
+    gen_structs = pickle.load(f)
 
 # 3. Load the Pre-trained Metric Model
 model = EquivariantCrystalGCN(hidden_dim=32, num_rbf=128).to(device)
-model.load_state_dict(torch.load("checkpoints/gcn_mp20_final.pt", map_location=device))
+model.load_state_dict(torch.load(PROJECT_ROOT / "checkpoints/gcn_mp20_final.pt", map_location=device))
 
 # 4. Compute TNovD
 # Class renamed: OTNoveltyScorer -> TransportNoveltyDistance
