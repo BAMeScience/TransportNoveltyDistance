@@ -86,10 +86,8 @@ model.load_state_dict(torch.load(PROJECT_ROOT / "checkpoints/gcn_mp20_final.pt",
 scorer = TransportNoveltyDistance(
     train_structures=train_structs,
     gnn_model=model,
-    device=device  # Good practice to pass device explicitly
+    device=device  
 )
-
-# Method renamed: compute_novelty -> compute_TNovD
 total, quality, memorization = scorer.compute_TNovD(gen_structs)
 
 print(f"Total TNovD: {total:.4f} | Quality: {quality:.4f} | Memorization: {memorization:.4f}")
@@ -109,7 +107,7 @@ train_contrastive_model(
     plot_path="imgs/validation_curve.png",
     epochs=10,
     # Define the model construction inline
-    model_builder=lambda: EquivariantCrystalGCN(hidden_dim=32, num_rbf=32, n_layers=3)
+    model_builder=lambda: EquivariantCrystalGCN(hidden_dim=32, n_layers=3)
 )
 ```
 
