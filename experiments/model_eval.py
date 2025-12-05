@@ -28,7 +28,6 @@ except ModuleNotFoundError as exc:  # pragma: no cover - runtime guard
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_MP20 = PROJECT_ROOT / "data" / "mp_20"
-DATA_MODELS = PROJECT_ROOT / "data_models"
 DATA_XTALMET = PROJECT_ROOT / "data" / "xtalmet_models"
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 IMGS_DIR = PROJECT_ROOT / "imgs"
