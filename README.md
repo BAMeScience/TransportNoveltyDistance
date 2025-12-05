@@ -121,7 +121,7 @@ python experiments/model_eval.py
 ```
 
 ### 📂 Data
-Scripts for downloading MP20, WBM, and generated model outputs can be found in the `downloads/` subfolder.
+Scripts for downloading MP20, WBM, and generated model outputs can be found in the `scripts/` subfolder, marked with the prefix "download". 
 
 ### 🤝 Contributing
 
