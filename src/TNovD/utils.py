@@ -3,20 +3,17 @@ import warnings
 
 import numpy as np
 import pandas as pd
-import spglib
 import torch
 from pymatgen.analysis.local_env import MinimumDistanceNN
-from pymatgen.core import Lattice, Structure, Element
+from pymatgen.core import  Structure, Element
 from pymatgen.core.operations import SymmOp
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 
-
+# helper file for pymatgen utils and deformation experiments.
 class StructureDataset(Dataset):
     """
-    Dataset creation for the Tensorflow Dataloader
-    Input:
-    Structures - List of crystal structures; Output of read_structure_from_csv
+    Simple dataset wrapper for the structures.
     """
 
     def __init__(self, structures):
@@ -29,43 +26,12 @@ class StructureDataset(Dataset):
         return self.structures[idx]
 
 
-def canonicalize_structure(
-    struct: Structure, symprec=1e-3, angle_tolerance=5.0
-) -> Structure:
-    """
-    Returns a symmetry-reduced, Niggli-reduced, sorted structure.
-    Falls back gracefully if spglib reduction fails.
-    """
-    # Step 1: Find primitive cell (symmetry reduction)
-    lattice = struct.lattice.matrix
-    positions = struct.frac_coords
-    numbers = [site.specie.number for site in struct.sites]
-    prim = spglib.find_primitive((lattice, positions, numbers), symprec=symprec)
-    if prim is not None:
-        struct = Structure(
-            prim[0], [s.specie for s in struct.sites[: len(prim[2])]], prim[1]
-        )
-
-    # Step 2: Niggli reduction and sorting
-    struct = struct.get_reduced_structure(reduction_algo="niggli")
-    struct = struct.get_sorted_structure()
-    return struct
-
 
 def augment(structure: Structure) -> Structure:
     """
-    Return an augmented copy of a pymatgen Structure by applying a random 3D rotation
-    (proper rotation, i.e. det = +1) and a random fractional translation (shift in [0,1)^3).
-
-    Parameters
-    ----------
-    structure : pymatgen.core.structure.Structure
-        Input structure (assumed to have a lattice / periodic cell).
-
-    Returns
-    -------
-    pymatgen.core.structure.Structure
-        A modified copy of the input structure. The original structure is unchanged.
+    return an augmented copy of pymatgen struc, only including random
+    rotations (determinant 1) and random translation.
+    does not change the underlying material distances.
     """
     s = structure.copy()
 
@@ -90,7 +56,7 @@ def augment(structure: Structure) -> Structure:
 
 def read_structure_from_csv(filename: str):
     """
-    Read a CSV with a 'cif' column and returns a list of structures: list[Structure].
+    simple csv reader, given a cif input structure.
     """
     df = pd.read_csv(filename, index_col=0)
     structures = []
@@ -102,11 +68,11 @@ def read_structure_from_csv(filename: str):
     return structures
 
 
-def structure_to_graph(structure, cutoff=5.0, num_rbf=128):
+def structure_to_graph(structure, cutoff=5.0, num_rbf=128, gamma = 20.0 ):
     """
-    Encode a pymatgen Structure as a torch_geometric Data graph. Adds node
-    embeddings for atomic number, pairwise edges within `cutoff`, and RBF edge
-    attributes, plus Cartesian positions for equivariant models.
+    encode the pymatgen structure into a graph for the gnn input.
+    parameters: cutoff for neighbor finding, rbf (radial basis functions) for the
+    distances as an embedding, gamma for the rbf scaling.
     """
     if len(structure) == 0:
         raise ValueError("Cannot build a graph for an empty structure.")
@@ -114,9 +80,10 @@ def structure_to_graph(structure, cutoff=5.0, num_rbf=128):
     z = torch.tensor([site.specie.Z for site in structure], dtype=torch.long)
     pos = torch.tensor(structure.cart_coords, dtype=torch.float)
 
+    # important to set get_all_sites = True, as otherwise cut_off does not do anything.
     mdnn = MinimumDistanceNN(cutoff=cutoff, get_all_sites = True)
+    # centers for rbf
     centers = torch.linspace(0, cutoff, num_rbf)
-    gamma = 20.0
 
     edge_index, edge_attr, edge_weight, edge_shift = [], [], [], []
 
@@ -162,26 +129,7 @@ def structure_to_graph(structure, cutoff=5.0, num_rbf=128):
     )
 
 
-def read_csv(filename):
-    # Read the CSV
-    df = pd.read_csv(filename, index_col=0)
-
-    # Convert each CIF string to a pymatgen Structure
-    structures = []
-    for i, row in df.iterrows():
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                structure = Structure.from_str(row["cif"], fmt="cif")
-            structures.append(structure)
-        except Exception as e:
-            print(f"Error processing row {i}: {e}")
-
-    print(f"Parsed {len(structures)} structures from {filename}.")
-
-    return structures
-
-
+# load structures from
 def load_structures_from_json_column(df, col="structure"):
     structures = []
     for i, val in enumerate(df[col]):
@@ -194,6 +142,10 @@ def load_structures_from_json_column(df, col="structure"):
     return structures
 
 
+
+# two helper functions to compare TNovD to the more classical novelty and coverage
+# our TNovD should capture both
+# IN FEATURE SPACE
 def novelty_score(gen_feats, train_feats, threshold=0.05):
     """
     Fraction of generated samples farther than `threshold` from all training samples.
@@ -214,26 +166,14 @@ def coverage_score(train_feats, gen_feats, threshold=0.05):
 
 
 
-
 def perturb_structures_gaussian(
     original_structures, sigma=0.05, rng=None
 ):
     """
-    Intentionally unphysical perturbations in fractional space using Gaussian noise,
-    with optional teleportation (uniform re-placement) of sites.
-
-    Args:
-        original_structures (list[pymatgen.core.Structure]): input structures.
-        sigma (float): std dev of Gaussian noise in fractional units.
-        teleport_prob (float): per-site probability to ignore local noise and
-                               place uniformly in [0,1)^3 (very unphysical).
-        rng (np.random.Generator or None): optional RNG for reproducibility.
-
-    Returns:
-        list[pymatgen.core.Structure]
+    perturbs structures (fractional space) with gaussian noise of standard deviation sigma
+    note that sigma = 0.05 is already quite large! (think 0.05 of gaussian in (-3,3))
+    proxy for stability
     """
-    if rng is None:
-        rng = np.random.default_rng()
 
     perturbed_structures = []
 
@@ -243,13 +183,14 @@ def perturb_structures_gaussian(
         for site in original.sites:
             u = np.asarray(site.frac_coords, dtype=float)
 
-  
-                # Gaussian noise in fractional space, then wrap to [0,1)
-            noise = rng.normal(0.0, sigma, size=3)
+
+            # Gaussian noise in fractional space, then wrap to [0,1)
+            noise = np.random.normal(0.0, sigma, size=3)
+            # mod 1 to stay in frac coordinates
             pert = (u + noise) % 1.0
 
             new_coords.append(pert)
-
+        # set new structure, species stay fixed, lattice to, but frac coords change
         perturbed = Structure(
             lattice=original.lattice,
             species=[s.species for s in original.sites],
@@ -264,14 +205,12 @@ def perturb_structures_gaussian(
 
 def augment_supercell(structure: Structure) -> Structure:
     """
-    Return an augmented copy of a pymatgen Structure by applying:
-      - random supercell expansion (50% probability)
-      - random 3D rotation
-      - random fractional translation
+    augment with rrotation, translation, supercell random scaling of 2 in either direction.
+    we do this as in the augment func
     """
     s = structure.copy()
 
-    # --- (1) 20% chance to make a supercell ---
+    # 50% chance of supercell
     if np.random.rand() < 0.5:
         # Random supercell choice (e.g. 2x1x1, 1x2x2, etc.)
         scale_options = [
@@ -282,7 +221,7 @@ def augment_supercell(structure: Structure) -> Structure:
         scale = scale_options[np.random.randint(len(scale_options))]
         s.make_supercell(scale)
 
-    # --- (2) Random rotation ---
+    # like augment
     rand_matrix = np.random.normal(size=(3,3))
     Q, _ = np.linalg.qr(rand_matrix)
     if np.linalg.det(Q) < 0:
@@ -291,7 +230,6 @@ def augment_supercell(structure: Structure) -> Structure:
     op = SymmOp.from_rotation_and_translation(rotation_matrix=Q, translation_vec=[0,0,0])
     s.apply_operation(op, fractional=False)
 
-    # --- (3) Random fractional translation ---
     shift = np.random.rand(3)
     s.translate_sites(range(len(s)), shift, frac_coords=True, to_unit_cell=True)
 
@@ -300,31 +238,17 @@ def augment_supercell(structure: Structure) -> Structure:
 
 def random_lattice_deformation(
     s: Structure,
-    max_strain: float = 0.1,
-    rng=None
-) -> Structure:
+    max_strain: float = 0.1) -> Structure:
     """
-    Apply a binary diagonal lattice strain:
-    50% chance of (1 - max_strain) and 50% chance of (1 + max_strain).
-    NO shear.
-
-    Args:
-        s (Structure): base structure.
-        max_strain (float): strain magnitude (e.g. 0.1 = ±10%).
-        rng (np.random.Generator): optional RNG.
-
-    Returns:
-        Structure: distorted copy with same fractional coordinates.
+    apply a diagonal lattice deformation with intensity max_strain
     """
-    if rng is None:
-        rng = np.random.default_rng()
 
     A = s.lattice.matrix
 
-    # choose expansion or compression for each axis
-    signs = rng.choice([-1, 1], size=3)
+    # max_strain this in random direction in each axis
+    signs = np.random.choice([-1, 1], size=3)
     scale = 1.0 + signs * max_strain
-
+    # scale lattice diagonally
     F = np.diag(scale)
 
     new_lat = A @ F
@@ -340,19 +264,10 @@ def random_lattice_deformation(
 
 def random_supercell(
     s: Structure,
-    p: float = 0.5,
-    rng=None,
-) -> Structure:
+    p: float = 0.5) -> Structure:
     """
-    Randomly create a supercell with probability p using predefined scale matrices.
-
-    Args:
-        s: pymatgen Structure
-        p: probability to apply a supercell (otherwise structure is unchanged)
-        rng: numpy random generator
-
-    Returns:
-        New Structure (possibly expanded supercell)
+    randomly create a supercell with probability p. same scaling as augment_supercell
+    note that this does not include rotations or translations
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -379,30 +294,17 @@ def random_supercell(
 def random_group_substitution(
     s: Structure,
     allowed_elements: set,
-    p: float = 0.05,
-    rng=None
-) -> Structure:
+    p: float = 0.05) -> Structure:
     """
-    Randomly substitute atoms with same-group elements BUT only if they are
-    in the model-supported element list.
-
-    Args:
-        s: pymatgen Structure
-        allowed_elements: set of element symbols supported by the model
-        p: substitution probability per atom
-        rng: numpy random generator
-
-    Returns:
-        Safe substituted Structure
+    random substituion within the same "group", i.e. column of periodic table
     """
-    if rng is None:
-        rng = np.random.default_rng()
+
 
     coords = np.array([site.frac_coords for site in s.sites])
     old_species = np.array([str(site.specie) for site in s.sites], dtype=object)
     new_species = old_species.copy()
 
-    mask = rng.random(len(old_species)) < p
+    mask = np.random.random(len(old_species)) < p
 
     for idx in np.where(mask)[0]:
         elem = Element(old_species[idx])
@@ -413,7 +315,7 @@ def random_group_substitution(
         ]
 
         if candidates:
-            new_species[idx] = rng.choice(candidates)
+            new_species[idx] = np.random.choice(candidates)
 
     return Structure(
         lattice=s.lattice,
@@ -425,34 +327,20 @@ def random_group_substitution(
 def random_substitution(
     s: Structure,
     allowed_elements: set,
-    p: float = 0.05,
-    rng=None
-) -> Structure:
+    p: float = 0.05) -> Structure:
     """
-    Randomly substitute atoms with same-group elements BUT only if they are
-    in the model-supported element list.
+    randomly substitute within any "allowed" elements (contained in some material in train dataset)
 
-    Args:
-        s: pymatgen Structure
-        allowed_elements: set of element symbols supported by the model
-        p: substitution probability per atom
-        rng: numpy random generator
-
-    Returns:
-        Safe substituted Structure
     """
-    if rng is None:
-        rng = np.random.default_rng()
 
     coords = np.array([site.frac_coords for site in s.sites])
     old_species = np.array([str(site.specie) for site in s.sites], dtype=object)
     new_species = old_species.copy()
 
-    mask = rng.random(len(old_species)) < p
+    mask = np.random.random(len(old_species)) < p
 
     for idx in np.where(mask)[0]:
         elem = Element(old_species[idx])
-        group = elem.group
 
         candidates = [
             e for e in allowed_elements
@@ -460,7 +348,7 @@ def random_substitution(
         ]
 
         if candidates:
-            new_species[idx] = rng.choice(candidates)
+            new_species[idx] = np.random.choice(candidates)
 
     return Structure(
         lattice=s.lattice,

@@ -52,7 +52,7 @@ scorer = TransportNoveltyDistance(
     device=device,
 )
 
-sigmas = np.linspace(0, 0.4, 10)
+sigmas = np.linspace(0, 0.2, 10)
 scores = []
 
 print("\n=== Gaussian Noise Experiment ===")

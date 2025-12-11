@@ -6,11 +6,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-
 from TNovD import (
     EquivariantCrystalGCN,
     TransportNoveltyDistance,
-    canonicalize_structure,
     coverage_score,
     novelty_score,
     read_structure_from_csv,
@@ -36,21 +34,14 @@ IMGS_DIR.mkdir(exist_ok=True)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate generative models with OT novelty."
-    )
+        description="Evaluate generative models with OT novelty.")
     parser.add_argument(
-        "--model",
-        choices=("equivariant"),
-        default="equivariant",
-        help="Trained backbone architecture.",
-    )
-    parser.add_argument(
-        "--checkpoint",
-        type=Path,
-        default=CHECKPOINTS_DIR / "gcn_mp20_final.pt",
-        help="Path to the encoder checkpoint (default: checkpoints/egnn_invariant_mp20.pt).",
-    )
+            "--checkpoint",
+            type=Path,
+            default=CHECKPOINTS_DIR / "gcn_mp20_final.pt",
+            help="Path to the encoder checkpoint (default: checkpoints/egnn_invariant_mp20.pt).")
     return parser.parse_args()
+
 
 
 # ===========================================================
@@ -61,20 +52,10 @@ str_train = read_structure_from_csv(DATA_MP20 / "train.csv")
 str_val = read_structure_from_csv(DATA_MP20 / "val.csv")
 
 
-def load_generated_model(path: Path, canonicalize: bool = True):
-    """Load a list of pymatgen Structures from a pickle file, optionally canonicalizing each."""
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Missing {path}. Run scripts/download_xtalmet_models.py or point the "
-            "script at a folder containing the xtalmet pickles."
-        )
-
+def load_generated_model(path: Path):
+    """load generated models."""
     with open(path, "rb") as f:
         data = pickle.load(f)
-
-    if canonicalize:
-        data = [canonicalize_structure(s) for s in data]
-
     print(f"Loaded {len(data)} structures from {path}.")
     return data
 
@@ -126,7 +107,6 @@ scorer = TransportNoveltyDistance(
     gnn_model=model,
     device=device,
 )
-
 # ===========================================================
 # 3️⃣ Evaluate All Models
 # ===========================================================
@@ -142,7 +122,7 @@ for name, structs in zip(model_names, structure_list):
     scores_mem.append(mem)
 
     # --- Compute novelty & coverage ---
-    gen_feats = scorer.featurizer(structs).to(scorer.device)
+    gen_feats = scorer.featurizer(structs)
     nov = novelty_score(gen_feats, scorer.train_feats, threshold=0.1)
     cov = coverage_score(scorer.train_feats, gen_feats, threshold=0.1)
     print(f"  {name}: Novelty={nov:.3f} | Coverage={cov:.3f}")
