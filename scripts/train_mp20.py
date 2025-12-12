@@ -39,12 +39,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional path to store the validation curve plot.",
     )
-    parser.add_argument(
-        "--model",
-        choices=("equivariant"),
-        default="equivariant",
-        help="Backbone architecture to train.",
-    )
+
     parser.add_argument("--epochs", type=int, default=10, help="Training epochs.")
     parser.add_argument("--batch-size", type=int, default=128, help="Batch size.")
     parser.add_argument(
@@ -70,7 +65,13 @@ def parse_args() -> argparse.Namespace:
         "--hidden-dim", type=int, default=128, help="Embedding dimension."
     )
     parser.add_argument(
-        "--num-rbf", type=int, default=32, help="Number of RBF features per edge."
+        "--num-rbf", type=int, default=128, help="Number of RBF features per edge."
+    )
+    parser.add_argument(
+        "--cutoff", type=float, default=5.0, help="cutoff for graph building."
+    )
+    parser.add_argument(
+        "--gamma", type=float, default=20.0, help="width of RBF bases."
     )
     parser.add_argument(
         "--n-layers", type=int, default=3, help="Number of EGNN layers to stack."
@@ -118,16 +119,6 @@ def main() -> None:
     if _is_main():
         print("🚀 Launching training on MP-20 splits.")
 
-    def make_model_builder():
-        if args.model == "equivariant":
-            return lambda: EquivariantCrystalGCN(
-                hidden_dim=args.hidden_dim,
-                num_rbf=args.num_rbf,
-                n_layers=args.n_layers,
-            )
-        raise ValueError(f"Unknown model architecture: {args.model}")
-
-    model_builder = make_model_builder()
 
     train_contrastive_model(
         str(args.train_csv),
@@ -138,13 +129,14 @@ def main() -> None:
         tau=args.tau,
         hidden_dim=args.hidden_dim,
         num_rbf=args.num_rbf,
+        cutoff=args.cutoff,
+        gamma=args.gamma,
         n_layers=args.n_layers,
         num_workers=args.num_workers,
         device=args.device,
         checkpoint_path=str(args.checkpoint_path) if args.checkpoint_path else None,
         plot_path=str(args.plot_path) if args.plot_path else None,
         accelerator=accelerator,
-        model_builder=model_builder,
         pin_memory=args.pin_memory,
         prefetch_factor=args.prefetch_factor,
     )

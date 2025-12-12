@@ -12,7 +12,6 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from torch_geometric.data import Batch
 from torch_geometric.nn import global_mean_pool
-from torch_geometric.typing import WITH_TORCH_CLUSTER
 
 warnings.filterwarnings(
     "ignore",
@@ -32,17 +31,20 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 class BaseCrystalEncoder(nn.Module):
-    """Shared utilities for crystal encoders (graph featurization + lattice stats)."""
+    """wrapper base class for gnn encoders with functionalities needed for TNovD."""
 
     def __init__(
         self,
         *,
         cutoff: float = 5.0,
-        num_rbf: int = 128
+        num_rbf: int = 128,
+        gamma = 20.
     ) -> None:
         super().__init__()
         self.cutoff = cutoff
         self.num_rbf = num_rbf
+        self.gamma = gamma
+
     @property
     def device(self) -> torch.device:
         return next(self.parameters()).device
@@ -51,12 +53,17 @@ class BaseCrystalEncoder(nn.Module):
         return {
             "cutoff": self.cutoff,
             "num_rbf": self.num_rbf,
+            "gamma": self.gamma
         }
 
     def featurize(self, structures: Sequence, batch_size: int = 64) -> torch.Tensor:
             """
-            Canonical featurizer shared by all encoders:
-            - Batched processing to avoid OOM.
+            featurizer for a GNN trained. note that the features are passed in L2 normalized form,
+            since they are compatible with the InfoNCE loss.
+            If one would use another featurizer like MACE this would likely be bad.
+            Params:
+            structures: sequence of structures to featurize
+            batch_size: batch size for chunk wise features
             """
             self.eval()
             embeddings = []
@@ -65,35 +72,36 @@ class BaseCrystalEncoder(nn.Module):
             for i in range(0, len(structures), batch_size):
                 chunk_structs = structures[i : i + batch_size]
 
-                # 1. Convert chunk to graphs (CPU side)
-                graphs = [structure_to_graph(s, **self._graph_kwargs()) for s in chunk_structs]
+                graphs = [structure_to_graph(s, self.cutoff, self.num_rbf, self.gamma) for s in chunk_structs]
 
-                # 2. Move chunk to GPU
+                # push to device for gnn processing
                 batch = Batch.from_data_list(graphs).to(self.device)
 
                 with torch.no_grad():
-                    # 3. Forward pass & Normalize
+                    # passing and normalizing
                     z = self.forward(batch)
                     z = F.normalize(z, dim=1)
 
-                    # 4. Move result back to CPU immediately to free GPU mem
+                    # back to cpu
                     embeddings.append(z.cpu())
 
-            # Concatenate all chunks
+            # chunky catting
             return torch.cat(embeddings, dim=0)
 
 class EGNNLayer(nn.Module):
-    """A lightweight invariant GNN block."""
+    """A lightweight invariant GNN block, inspired by the EGNN architecture
+       We dropped positional updates to make it invariant.
+       Input of the layer not only RBF features, but also the pure distance.
+       """
 
-    def __init__(
-        self, in_features: int, hidden_features: int, edge_features: int = 0
-    ) -> None:
+    def __init__(self, in_features: int, hidden_features: int, edge_features: int = 0, cut_off = 5.0) -> None:
         super().__init__()
 
-        # FIX: Add +1 to input_dim to account for the raw scalar distance
-        # [Atom_i (D) + Atom_j (D) + RBF (K) + Raw_Dist (1)]
+        # in features = hidden embedding of both nodes+ num_rbf + raw dist
         input_dim = in_features * 2 + edge_features + 1
+        self.cutoff = cut_off
 
+        # edge and node MLPs
         self.edge_mlp = nn.Sequential(
             nn.Linear(input_dim, hidden_features),
             nn.SiLU(),
@@ -115,49 +123,43 @@ class EGNNLayer(nn.Module):
     ):
         row, col = edge_index
 
-        # 1. Prepare Raw Distance
-        # Reshape to (E, 1) and Normalize to roughly [0, 1] range for stability
-        # Assuming cutoff is ~5.0 or 6.0, dividing by 5.0 is safe.
-        d_raw = edge_weight.unsqueeze(-1) / 5.0
+        d_raw = edge_weight.unsqueeze(-1) / self.cutoff  # normalize with cutoff parameter
 
-        # 2. Concatenate Everything
-        # This gives the model "High Res" (d_raw) AND "Context" (edge_attr)
+        # concatenate everything, inclduding raw distance
         edge_input = torch.cat([x[row], x[col], edge_attr, d_raw], dim=-1)
 
         m_ij = self.edge_mlp(edge_input)
 
         agg = torch.zeros_like(x)
         agg.index_add_(0, row, m_ij)
+        # update hidden representation, but NOT position
         x = x + self.node_mlp(torch.cat([x, agg], dim=-1))
 
         return x
 
 
 class EquivariantCrystalGCN(BaseCrystalEncoder):
-    """Invariant encoder using RBFs + Raw Distance for max sensitivity."""
+    """module now stacking many egnn layers """
 
-    def __init__(
-        self,
-        hidden_dim: int = 128, # Recommended 128 or 256
-        num_rbf: int = 128,    # High res RBF
-        n_layers: int = 3,
-        cutoff: float = 5.0,
-    ) -> None:
-        super().__init__(cutoff=cutoff, num_rbf=num_rbf)
+    def __init__(self,hidden_dim: int = 128, num_rbf: int = 128, n_layers: int = 3,cutoff: float = 5.0, gamma: float = 20.0) -> None:
+        super().__init__(cutoff=cutoff, num_rbf=num_rbf, gamma = gamma)
+        # embedding for species/atomic number
         self.emb = nn.Embedding(100, hidden_dim)
 
+        # stack of egnn layers
         self.layers = nn.ModuleList(
             [
-                EGNNLayer(hidden_dim, hidden_dim, edge_features=num_rbf)
+                EGNNLayer(hidden_dim, hidden_dim, edge_features=num_rbf, cut_off=cutoff)
                 for _ in range(n_layers)
             ]
         )
+        # final linear layer
         self.lin = nn.Linear(hidden_dim, hidden_dim)
 
     def forward(self, data):
+        # embedding
         x = self.emb(data.x).float()
-
-        # Extract RBF (attr) and Raw Distance (weight)
+        # get graph info
         edge_index = data.edge_index
         edge_attr = data.edge_attr
         edge_weight = data.edge_weight
@@ -166,6 +168,7 @@ class EquivariantCrystalGCN(BaseCrystalEncoder):
             # Pass both!
             x = layer(x, edge_index, edge_weight, edge_attr)
 
+        # mean pooling for representation independent of size of struc
         x = global_mean_pool(x, data.batch)
         return self.lin(F.relu(x))
 
@@ -177,17 +180,20 @@ class GraphContrastiveDataset(Dataset):
     DataLoader workers to perform heavy featurization work in parallel.
     """
 
-    def __init__(self, structures: Sequence, num_rbf: int = 32) -> None:
+    def __init__(self, structures: Sequence, cutoff: float = 5.0,  num_rbf: int = 32, gamma: float = 20.0) -> None:
         self.structures = list(structures)
         self.num_rbf = num_rbf
+        self.cutoff = cutoff
+        self.gamma = gamma
 
     def __len__(self) -> int:
         return len(self.structures)
 
     def __getitem__(self, idx: int):
         structure = self.structures[idx]
-        g1 = structure_to_graph(augment_supercell(structure), num_rbf=self.num_rbf)
-        g2 = structure_to_graph(augment_supercell(structure), num_rbf=self.num_rbf)
+        # augment with supercell plus rotation and translation, both with different seeds
+        g1 = structure_to_graph(augment_supercell(structure), cutoff=self.cutoff, num_rbf=self.num_rbf, gamma=self.gamma)
+        g2 = structure_to_graph(augment_supercell(structure), cutoff=self.cutoff, num_rbf=self.num_rbf, gamma=self.gamma)
         return g1, g2
 
 
@@ -198,18 +204,21 @@ def graph_pair_collate(batch):
     return batch1, batch2
 
 
+# make data loader passing all the args...
 def make_contrastive_dataloader(
     structures: Sequence,
     *,
     batch_size: int,
+    cutoff: float,
     num_rbf: int,
+    gamma: float,
     shuffle: bool,
     num_workers: int,
     pin_memory: bool,
     prefetch_factor: int | None,
     persistent_workers: bool | None,
 ):
-    dataset = GraphContrastiveDataset(structures, num_rbf=num_rbf)
+    dataset = GraphContrastiveDataset(structures, cutoff = cutoff, num_rbf=num_rbf, gamma = gamma)
     if num_workers == 0:
         effective_prefetch = None
         effective_persistent = (
@@ -232,14 +241,15 @@ def make_contrastive_dataloader(
         persistent_workers=effective_persistent,
     )
 
-
+# evaluate cosine similarity
+# for our invariant gnn this should be pretty close to 1.
+# the inter cosine should go down during training
 def validate(
     model: nn.Module,
     dataloader: DataLoader,
     device=None,
     pin_memory: bool = False,
 ):
-    """Evaluate intra-structure consistency and inter-structure separation."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
@@ -255,11 +265,12 @@ def validate(
 
             z1 = F.normalize(model(batch1), dim=1)
             z2 = F.normalize(model(batch2), dim=1)
-
+            # diagonal distances
             intra = (z1 * z2).sum(dim=1)
             intra_sims.extend(intra.cpu().numpy())
-
+            # outer product for inter
             sim_matrix = z1 @ z2.T
+            # kill diagonal
             mask = ~torch.eye(len(sim_matrix), dtype=torch.bool, device=device)
             inter = sim_matrix[mask]
             inter_sims.extend(inter.cpu().numpy())
@@ -269,7 +280,7 @@ def validate(
 
 
 def info_nce_loss(z1: torch.Tensor, z2: torch.Tensor, tau: float = 0.1) -> torch.Tensor:
-    """Standard InfoNCE loss between two augmented batches."""
+    """standard info nce loss for contrastive learning."""
     B, _ = z1.shape
     z1 = F.normalize(z1, dim=1)
     z2 = F.normalize(z2, dim=1)
@@ -293,13 +304,14 @@ def train_contrastive_model(
     lr: float = 1e-3,
     tau: float = 0.1,
     hidden_dim: int = 128,
+    cutoff: float = 5.0,
     num_rbf: int = 32,
+    gamma : float = 20.0,
     n_layers: int = 3,
     device: str | torch.device | None = None,
     checkpoint_path: str | None = None,
     plot_path: str | None = None,
     accelerator: "Accelerator | None" = None,
-    model_builder: Callable[[], nn.Module] | None = None,
     num_workers: int = 0,
     pin_memory: bool = False,
     prefetch_factor: int | None = None,
@@ -319,17 +331,19 @@ def train_contrastive_model(
     train_structs = read_structure_from_csv(train_csv)
     val_structs = read_structure_from_csv(val_csv) if val_csv else train_structs
 
-    if model_builder is None:
-        model = EquivariantCrystalGCN(
-            hidden_dim=hidden_dim, num_rbf=num_rbf, n_layers=n_layers
-        ).to(torch_device)
-    else:
-        model = model_builder().to(torch_device)
+
+    model = EquivariantCrystalGCN(
+        hidden_dim=hidden_dim, cutoff= cutoff, num_rbf=num_rbf, n_layers=n_layers, gamma = gamma).to(torch_device)
+
+    # adam is best
     opt = torch.optim.Adam(model.parameters(), lr=lr)
+    # make train and val data loader
     train_loader = make_contrastive_dataloader(
         train_structs,
         batch_size=batch_size,
+        cutoff=cutoff,
         num_rbf=num_rbf,
+        gamma = gamma,
         shuffle=True,
         num_workers=num_workers,
         pin_memory=pin_memory,
@@ -341,6 +355,8 @@ def train_contrastive_model(
         val_structs,
         batch_size=batch_size,
         num_rbf=num_rbf,
+        cutoff=cutoff,
+        gamma = gamma,
         shuffle=False,
         num_workers=num_workers,
         pin_memory=pin_memory,
@@ -351,7 +367,8 @@ def train_contrastive_model(
         model, opt = accelerator.prepare(model, opt)
 
     val_intra, val_inter = [], []
-
+    # training loop
+    # track cosine similiarty
     for epoch in range(epochs):
         ema_loss = 0.0
         for step, (batch1, batch2) in enumerate(train_loader):

@@ -269,7 +269,6 @@ def random_supercell(
     randomly create a supercell with probability p. same scaling as augment_supercell
     note that this does not include rotations or translations
     """
-
     scale_options = [
         (2, 1, 1),
         (1, 2, 1),
@@ -283,7 +282,7 @@ def random_supercell(
     new_struct = s.copy()
 
     if np.random.random() < p:
-        scale = np.random.choice(scale_options)
+        scale = scale_options[np.random.randint(len(scale_options))]
         new_struct.make_supercell(scale)
 
     return new_struct
