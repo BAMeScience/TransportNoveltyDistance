@@ -136,19 +136,21 @@ Scripts for downloading MP20, WBM, and generated model outputs can be found in t
 If you have any issues with the code, or have new ideas on how we can improve this package, please create a GitHub Issue. PRs are also very welcome! The code is still researchy, so feedback is appreciated.
 
 ## 📜 Citation
-Here you can find the Paper preprint online. 
-Transport Novelty Distance: A Distributional Metric for Evaluating Material Generative Models
-Hagemann, Müller, George, Benner
-arXiV:2512.09514
-https://www.arxiv.org/abs/2512.09514
-
-
 If you find the paper or the code useful, please cite!
-BibTeX: 
 
+### Citation
+
+> If you find the paper or the code useful, please cite:
+
+*Transport Novelty Distance: A Distributional Metric for Evaluating Material Generative Models*  
+Hagemann, Müller, George, Benner  
+arXiv: [2512.09514](https://arxiv.org/abs/2512.09514)
+
+```bibtex
 @article{hagemann2025transportnoveltydistancedistributional,
-      title={Transport Novelty Distance: A Distributional Metric for Evaluating Material Generative Models}, 
-      author={Paul Hagemann and Simon Müller and Janine George and Philipp Benner},
-      year={2025},
-      journal={arXiv preprint arXiv:2512.09514}
+  title   = {Transport Novelty Distance: A Distributional Metric for Evaluating Material Generative Models},
+  author  = {Hagemann, Paul and Müller, Simon and George, Janine and Benner, Philipp},
+  year    = {2025},
+  journal = {arXiv preprint arXiv:2512.09514}
 }
+
