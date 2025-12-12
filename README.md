@@ -31,10 +31,10 @@ The repository ships as an installable Python package (`TNovD`). All core logic 
 
 ```bash
 # Navigate to the respective project folder, then clone this repository
-git clone https://github.com/BAMeScience/MatSciNovelty.git
+git clone https://github.com/BAMeScience/TransportNoveltyDistance.git
 
 # Create python environment
-cd MatSciNovelty
+cd TransportNoveltyDistance
 python -m venv .venv
 source .venv/bin/activate
 
@@ -136,4 +136,19 @@ Scripts for downloading MP20, WBM, and generated model outputs can be found in t
 If you have any issues with the code, or have new ideas on how we can improve this package, please create a GitHub Issue. PRs are also very welcome! The code is still researchy, so feedback is appreciated.
 
 ## 📜 Citation
-TBD
+Here you can find the Paper preprint online. 
+Transport Novelty Distance: A Distributional Metric for Evaluating Material Generative Models
+Hagemann, Müller, George, Benner
+arXiV:2512.09514
+https://www.arxiv.org/abs/2512.09514
+
+
+If you find the paper or the code useful, please cite!
+BibTeX: 
+
+@article{hagemann2025transportnoveltydistancedistributional,
+      title={Transport Novelty Distance: A Distributional Metric for Evaluating Material Generative Models}, 
+      author={Paul Hagemann and Simon Müller and Janine George and Philipp Benner},
+      year={2025},
+      journal={arXiv preprint arXiv:2512.09514}
+}
