@@ -135,10 +135,8 @@ Scripts for downloading MP20, WBM, and generated model outputs can be found in t
 
 If you have any issues with the code, or have new ideas on how we can improve this package, please create a GitHub Issue. PRs are also very welcome! The code is still researchy, so feedback is appreciated.
 
-## 📜 Citation
-If you find the paper or the code useful, please cite!
+### 📜 Citation
 
-### Citation
 
 > If you find the paper or the code useful, please cite:
 
