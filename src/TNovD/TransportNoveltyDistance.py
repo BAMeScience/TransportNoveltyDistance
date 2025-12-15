@@ -78,18 +78,8 @@ class TransportNoveltyDistance:
 
     def get_ot_plan(self, X: torch.Tensor, Y: torch.Tensor):
         """
-        Compute the balanced OT transport plan between two embedding sets.
-
-        Parameters
-        ----------
-        X, Y
-            Embeddings for the source (training) and target (generated) sets.
-
-        Returns
-        -------
-        tuple[torch.Tensor, torch.Tensor]
-            ``(P, C)`` where ``P`` is the optimal transport plan and ``C`` the
-            pairwise distance matrix.
+        computes the optimal transport plan between two sets of features X and Y
+        returns the plan pi and cost C (euclidean)
         """
 
         # moving to numpy seems to be quicker.
