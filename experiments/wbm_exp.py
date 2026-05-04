@@ -55,7 +55,7 @@ str_train = read_structure_from_csv(DATA_MP20 / "train.csv")
 
 # --- Load stable WBM structures ---
 summary = pd.read_csv(WBM_DIR / "wbm-summary.csv")
-STABILITY_COLUMN = "e_form_per_atom_mp2020_corrected"
+STABILITY_COLUMN = "e_above_hull_mp2020_corrected_ppd_mp"
 # MP2020-corrected energies incorporate the Materials Project correction scheme
 # (anion redox, GGA/GGA+U alignment, etc.) to align DFT formation energies with
 # experimental thermochemistry. Using the corrected column ensures stability
