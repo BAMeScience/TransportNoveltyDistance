@@ -33,7 +33,8 @@ class TransportNoveltyDistance:
         memorization_weight: Optional[float] = None,
         device: str | torch.device | None = None,
         ot_num_itermax: int = 1_000_000,
-    ) -> None:
+        calibration_sample_size: int | None = None,
+        calibration_structures: Optional[Sequence] = None) -> None:
         """
         Parameters
         ----------
@@ -51,6 +52,11 @@ class TransportNoveltyDistance:
         ot_num_itermax
             maximum number of iterations for the OT hungarian solver. It still occasionally throws are warning, but
             the error was of 5e-8 magnitude, so that is fine.
+        calibration_sample_size
+            Optional number of training embeddings to use for tau/M calibration.
+            The full training embeddings are still used later as the reference set.
+        calibration_seed
+            Random seed used when calibration_sample_size subsamples the reference set.
         """
         self.device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -64,8 +70,10 @@ class TransportNoveltyDistance:
         print("Featurizing training structures using GNN")
         self.train_feats = self.featurizer(self.train_structs)#.to(self.device)
         print(f"Training embeddings shape: {self.train_feats.shape}")
+        self.calibration_feats = self.featurizer(list(calibration_structures)) if calibration_structures is not None else self.train_feats
 
         self.ot_steps = ot_num_itermax
+        self.calibration_sample_size = calibration_sample_size
         if tau is None or memorization_weight is None:
             self.tau, self.m_weight = self.set_tau_and_M()
         else:
@@ -95,19 +103,25 @@ class TransportNoveltyDistance:
 
     def set_tau_and_M(self):
         """
-        Jsetting tau and M based on diffusion memorization rule and equilibrium condition
+        setting tau and M based on diffusion memorization rule and equilibrium condition
 
         Uses only training_features and returns tau and M.
         """
+        train_feats = self.train_feats
+        if self.calibration_sample_size is not None:
+            calibration_feats = self.calibration_feats[torch.randperm(len(self.calibration_feats))[: self.calibration_sample_size]]
+            print(
+                f"Calibrating tau/M on {len(train_feats)} training embeddings and {len(calibration_feats)} calibration embeddings."
+            )
+        else:
+            calibration_feats = self.calibration_feats
 
         # take all pairwise distances
-        pairwise = torch.cdist(self.train_feats, self.train_feats)
-        # self neighbors not allowed
-        pairwise.fill_diagonal_(float("inf"))
-        # sort by distance
-        pw_dist_sorted, _ = torch.sort(pairwise, dim=1)
-        nearest_neighbor1 = pw_dist_sorted[:, 0]  # 1-NN
-        nearest_neighbor2 = pw_dist_sorted[:, 1]  # 2-NN
+        pairwise = torch.cdist(calibration_feats, train_feats)
+        # nearest two neighbors
+        nearest_neighbors, _ = torch.topk(pairwise, k=2, dim=1, largest=False)
+        nearest_neighbor1 = nearest_neighbors[:, 0]  # 1-NN
+        nearest_neighbor2 = nearest_neighbors[:, 1]  # 2-NN
         # theoretical memorization rule
         y_true = ((nearest_neighbor1 ** 2) <= (nearest_neighbor2**2 / 9.0)).float()
 
@@ -130,24 +144,13 @@ class TransportNoveltyDistance:
                 tau_opt = tau_candidate.item()
 
         # equilbrium condition for M
-        # split train set into two halves
-        n = len(self.train_structs)
-        # seed does not seem to vary much
-        perm = torch.randperm(n)
-
-        indices1 = perm[: n // 2]
-        indices2 = perm[n // 2 :]
-
-        split1 = [self.train_structs[i] for i in indices1]
-        split2 = [self.train_structs[i] for i in indices2]
-
-        feats1 = self.train_feats[indices1]
-        feats2 = self.train_feats[indices2]
+        feats1 = train_feats
+        feats2 = calibration_feats
 
         pw_cost = ot.dist(feats1, feats2, metric= 'euclidean')
 
-        a = torch.ones(len(split1)) / len(split1)
-        b = torch.ones(len(split2)) / len(split2)
+        a = torch.ones(len(feats1)) / len(feats1)
+        b = torch.ones(len(feats2)) / len(feats2)
 
         ot_plan = ot.emd(a, b, pw_cost, numItermax=self.ot_steps)
         # compute for the M formula
@@ -156,7 +159,7 @@ class TransportNoveltyDistance:
         p_close = torch.sum(ot_plan[mask])
         p_far = torch.sum(ot_plan[not_mask])
 
-        M = p_far / max(p_close, 1e-8)
+        M = (p_far / torch.clamp(p_close, min=1e-8)).item()
 
         return tau_opt, M
 
@@ -181,4 +184,3 @@ class TransportNoveltyDistance:
             f"Quality={qual_comp:.4f}, Memorization={mem_comp:.4f}, Total={TNovD:.4f}"
         )
         return TNovD.item(), qual_comp.item(), mem_comp.item()
-

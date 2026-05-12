@@ -18,12 +18,27 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DEST = PROJECT_ROOT / "data" / "xtalmet_models"
 REPO_ID = "masahiro-negishi/xtalmet"
 REPO_TYPE = "dataset"
-ALLOW_PATTERNS = ("**/*.pkl", "**/*.pkl.gz")
+MODEL_PICKLES = (
+    "mattergen.pkl",
+    "diffcsp.pkl",
+    "diffcsppp.pkl",
+    "cdvae.pkl",
+    "adit.pkl",
+    "chemeleon.pkl",
+)
+REMOTE_MODEL_DIR = Path("mp20") / "model"
+REMOTE_PICKLE_PATHS = tuple(REMOTE_MODEL_DIR / name for name in MODEL_PICKLES)
+REMOTE_GZ_PICKLE_PATHS = tuple(
+    REMOTE_MODEL_DIR / f"{name}.gz" for name in MODEL_PICKLES
+)
+ALLOW_PATTERNS = tuple(
+    str(path) for path in (*REMOTE_PICKLE_PATHS, *REMOTE_GZ_PICKLE_PATHS)
+)
 
 
 def download_pickles(destination: Path, overwrite: bool) -> None:
     destination.mkdir(parents=True, exist_ok=True)
-    print(f"⬇ Syncing pickle files from {REPO_ID}")
+    print(f"⬇ Syncing selected MP-20 model pickle files from {REPO_ID}")
     snapshot_dir = Path(
         snapshot_download(
             repo_id=REPO_ID,
@@ -33,30 +48,50 @@ def download_pickles(destination: Path, overwrite: bool) -> None:
         )
     )
 
-    found = False
-    for src in sorted(snapshot_dir.rglob("*.pkl")):
-        dest_file = destination / src.name
-        found = True
+    copied = 0
+    for pickle_path, gz_pickle_path in zip(REMOTE_PICKLE_PATHS, REMOTE_GZ_PICKLE_PATHS):
+        src = snapshot_dir / gz_pickle_path
+        dest_file = destination / pickle_path.name
         if dest_file.exists() and not overwrite:
             print(f"✔ {dest_file} already exists; skipping.")
             continue
-        shutil.copy(src, dest_file)
-        print(f"✔ Copied {src.name} to {dest_file}")
 
-    for src in sorted(snapshot_dir.rglob("*.pkl.gz")):
-        dest_file = destination / src.stem  # remove .gz
-        found = True
-        if dest_file.exists() and not overwrite:
-            print(f"✔ {dest_file} already exists; skipping.")
+        if src.exists():
+            with gzip.open(src, "rb") as fin, open(dest_file, "wb") as fout:
+                shutil.copyfileobj(fin, fout)
+            print(f"✔ Decompressed {src.name} to {dest_file}")
+            copied += 1
             continue
-        with gzip.open(src, "rb") as fin, open(dest_file, "wb") as fout:
-            shutil.copyfileobj(fin, fout)
-        print(f"✔ Decompressed {src.name} to {dest_file}")
 
-    if not found:
+        src = snapshot_dir / pickle_path
+        if src.exists():
+            shutil.copy(src, dest_file)
+            print(f"✔ Copied {src.name} to {dest_file}")
+            copied += 1
+            continue
+
         raise SystemExit(
-            "No pickle artifacts were found in the snapshot. "
-            "Check the repository structure or update ALLOW_PATTERNS."
+            f"Could not find {gz_pickle_path} or {pickle_path} in the snapshot."
+        )
+
+    if copied == 0:
+        print("✔ All selected pickle files already exist; nothing to download.")
+
+    present = {path.name for path in destination.glob("*.pkl")}
+    expected = set(MODEL_PICKLES)
+    extras = sorted(present - expected)
+    if extras:
+        print(
+            "ℹ Extra .pkl files remain in the output directory; "
+            "remove them manually if you want a clean folder: "
+            + ", ".join(extras)
+        )
+
+    missing = sorted(expected - present)
+    if missing:
+        raise SystemExit(
+            "The following selected pickle files are still missing: "
+            + ", ".join(missing)
         )
 
 

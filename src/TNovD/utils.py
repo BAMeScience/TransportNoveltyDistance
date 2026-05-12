@@ -9,6 +9,12 @@ from pymatgen.core import  Structure, Element
 from pymatgen.core.operations import SymmOp
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
+from ase.filters import UnitCellFilter
+from ase.optimize import LBFGS
+from mace.calculators import mace_mp
+from pymatgen.io.ase import AseAtomsAdaptor
+
+
 
 # helper file for pymatgen utils and deformation experiments.
 class StructureDataset(Dataset):
@@ -68,7 +74,7 @@ def read_structure_from_csv(filename: str):
     return structures
 
 
-def structure_to_graph(structure, cutoff=5.0, num_rbf=128, gamma = 20.0 ):
+def structure_to_graph_old(structure, cutoff=5.0, num_rbf=128, gamma = 20.0 ):
     """
     encode the pymatgen structure into a graph for the gnn input.
     parameters: cutoff for neighbor finding, rbf (radial basis functions) for the
@@ -261,6 +267,115 @@ def random_lattice_deformation(
     )
 
 
+def relax_structures(
+    structures,
+    *,
+    mace_model: str = "small",
+    device: str = "cuda",
+    steps: int = 50,
+    fmax: float = 0.03,
+):
+    adaptor = AseAtomsAdaptor()
+    calc = mace_mp(model=str(mace_model), device=str(device), default_dtype="float32", compile=False)
+    supported_atomic_numbers = {int(z) for z in calc.models[0].atomic_numbers}#
+    relaxed = []
+    for s in structures:
+        structure_atomic_numbers = {int(site.specie.Z) for site in s.sites}
+        if not structure_atomic_numbers.issubset(supported_atomic_numbers):
+            relaxed.append(
+                Structure(
+                    s.lattice,
+                    [site.species for site in s.sites],
+                    [site.frac_coords for site in s.sites],
+                    coords_are_cartesian=False,
+                )
+            )
+            continue
+        atoms = adaptor.get_atoms(s)
+        atoms.pbc = True
+        atoms.calc = calc
+        opt = LBFGS(UnitCellFilter(atoms, mask=[1, 1, 1, 1, 1, 1]), logfile=None)
+        opt.run(fmax=float(fmax), steps=int(steps))
+        relaxed_s = adaptor.get_structure(atoms)
+        relaxed.append(
+            Structure(
+                relaxed_s.lattice,
+                [site.species for site in relaxed_s.sites],
+                [site.frac_coords for site in relaxed_s.sites],
+                coords_are_cartesian=False,
+            )
+        )
+    return relaxed
+
+
+
+def structure_to_graph(structure, cutoff=5.0, num_rbf=128, gamma=20.0):
+    """
+    Encode the pymatgen structure into a graph for the GNN input.
+    Uses pymatgen's fast neighbor list (C-backed), safe for skewed lattices.
+    """
+    if len(structure) == 0:
+        raise ValueError("Cannot build a graph for an empty structure.")
+
+    z = torch.tensor([site.specie.Z for site in structure], dtype=torch.long)
+    pos = torch.tensor(structure.cart_coords, dtype=torch.float)
+
+    centers = torch.linspace(0, cutoff, num_rbf, dtype=torch.float)
+
+    edge_index = []
+    edge_attr = []
+    edge_weight = []
+    edge_shift = []
+
+    # ---- FAST, VECTORIZED pymatgen neighbor search ----
+    idx_i, idx_j, offsets, dists = structure.get_neighbor_list(
+        r=cutoff,
+        sites=structure.sites,
+        numerical_tol=1e-8,
+    )
+
+    lattice_matrix = torch.tensor(
+        structure.lattice.matrix, dtype=torch.float
+    )
+
+    for i, j, offset, d in zip(idx_i, idx_j, offsets, dists):
+        edge_index.append([int(i), int(j)])
+        edge_weight.append(float(d))
+
+        # RBF embedding
+        edge_attr.append(torch.exp(-gamma * (d - centers) ** 2))
+
+        # periodic image shift → cartesian
+        shift_vec = torch.matmul(
+            torch.tensor(offset, dtype=torch.float),
+            lattice_matrix
+        )
+        edge_shift.append(shift_vec)
+
+    if edge_index:
+        edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+        edge_attr = torch.stack(edge_attr)
+        edge_weight = torch.tensor(edge_weight, dtype=torch.float)
+        edge_shift = torch.stack(edge_shift)
+    else:
+        num_edges = 0
+        edge_index = torch.zeros((2, num_edges), dtype=torch.long)
+        edge_attr = torch.zeros((num_edges, num_rbf), dtype=torch.float)
+        edge_weight = torch.zeros((num_edges,), dtype=torch.float)
+        edge_shift = torch.zeros((num_edges, 3), dtype=torch.float)
+
+    cell = lattice_matrix.unsqueeze(0)
+    return Data(
+        x=z,
+        z=z,
+        pos=pos,
+        cell=cell,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        edge_weight=edge_weight,
+        edge_shift=edge_shift,
+    )
+
 
 def random_supercell(
     s: Structure,
@@ -308,7 +423,7 @@ def random_group_substitution(
         group = elem.group
         candidates = [
             e for e in allowed_elements
-            if Element(e).group == elem.group and e != elem.symbol
+            if Element(e).group == group and e != elem.symbol
         ]
 
         if candidates:
