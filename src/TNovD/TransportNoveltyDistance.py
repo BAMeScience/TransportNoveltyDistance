@@ -32,7 +32,7 @@ class TransportNoveltyDistance:
         tau: Optional[float] = None,
         memorization_weight: Optional[float] = None,
         device: str | torch.device | None = None,
-        ot_num_itermax: int = 1_000_000,
+        ot_num_itermax: int = 10_000_000,
         calibration_sample_size: int | None = None,
         calibration_structures: Optional[Sequence] = None) -> None:
         """
@@ -109,7 +109,8 @@ class TransportNoveltyDistance:
         """
         train_feats = self.train_feats
         if self.calibration_sample_size is not None:
-            calibration_feats = self.calibration_feats[torch.randperm(len(self.calibration_feats))[: self.calibration_sample_size]]
+            # calibration_feats = self.calibration_feats[torch.randperm(len(self.calibration_feats))[: self.calibration_sample_size]]
+            calibration_feats = self.calibration_feats[: self.calibration_sample_size]
             print(
                 f"Calibrating tau/M on {len(train_feats)} training embeddings and {len(calibration_feats)} calibration embeddings."
             )
