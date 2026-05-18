@@ -10,7 +10,7 @@ from pymatgen.core.operations import SymmOp
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 from ase.filters import UnitCellFilter
-from ase.optimize import LBFGS
+from ase.optimize import FIRE
 from mace.calculators import mace_mp
 from pymatgen.io.ase import AseAtomsAdaptor
 
@@ -242,6 +242,10 @@ def augment_supercell(structure: Structure) -> Structure:
     return s
 
 
+# lattice deformation where we scale (or make smaller) the whole lattice
+# by a diagonal amtrix
+# this ddestroys the interatomic distances
+
 def random_lattice_deformation(
     s: Structure,
     max_strain: float = 0.1) -> Structure:
@@ -257,7 +261,7 @@ def random_lattice_deformation(
     # scale lattice diagonally
     F = np.diag(scale)
 
-    new_lat = A @ F
+    new_lat = F @ A
 
     return Structure(
         lattice=new_lat,
@@ -267,21 +271,32 @@ def random_lattice_deformation(
     )
 
 
+# relaxing function using mace model
+# relaxes (with that mask) both atoms and lattice
+# parameters are set to a middle ground of run time and accuracy
+
 def relax_structures(
     structures,
     *,
-    mace_model: str = "small",
+    mace_model: str = "medium-0b3",
     device: str = "cuda",
-    steps: int = 50,
-    fmax: float = 0.03,
+    steps: int = 100,
+    fmax: float = 0.02,
 ):
     adaptor = AseAtomsAdaptor()
-    calc = mace_mp(model=str(mace_model), device=str(device), default_dtype="float32", compile=False)
-    supported_atomic_numbers = {int(z) for z in calc.models[0].atomic_numbers}#
+    previous_default_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(torch.float64)
+    calc = mace_mp(model=str(mace_model), device=str(device), default_dtype="float64", compile=False)
+    supported_atomic_numbers = {int(z) for z in calc.models[0].atomic_numbers}
     relaxed = []
-    for s in structures:
+    for i, s in enumerate(structures, start=1):
+        show_progress = i == 1 or i % 1000 == 0 or i == len(structures)
+        if show_progress:
+            print(f"Relaxing structure {i}/{len(structures)} with MACE model {mace_model}")
         structure_atomic_numbers = {int(site.specie.Z) for site in s.sites}
         if not structure_atomic_numbers.issubset(supported_atomic_numbers):
+            if show_progress:
+                print(f"Skipping structure {i}/{len(structures)}: unsupported element for {mace_model}")
             relaxed.append(
                 Structure(
                     s.lattice,
@@ -294,8 +309,16 @@ def relax_structures(
         atoms = adaptor.get_atoms(s)
         atoms.pbc = True
         atoms.calc = calc
-        opt = LBFGS(UnitCellFilter(atoms, mask=[1, 1, 1, 1, 1, 1]), logfile=None)
-        opt.run(fmax=float(fmax), steps=int(steps))
+        opt = FIRE(
+            UnitCellFilter(atoms, mask=[1, 1, 1, 1, 1, 1]),
+            logfile="-" if show_progress else None,
+        )
+        converged = opt.run(fmax=float(fmax), steps=int(steps))
+        if show_progress:
+            print(
+                f"Finished structure {i}/{len(structures)}: "
+                f"converged={converged}, optimizer_steps={opt.nsteps}"
+            )
         relaxed_s = adaptor.get_structure(atoms)
         relaxed.append(
             Structure(
@@ -305,6 +328,7 @@ def relax_structures(
                 coords_are_cartesian=False,
             )
         )
+    torch.set_default_dtype(previous_default_dtype)
     return relaxed
 
 

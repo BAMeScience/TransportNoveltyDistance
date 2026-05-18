@@ -7,11 +7,9 @@ import matplotlib.pyplot as plt
 import torch
 from pymatgen.core import Structure
 
-from TNovD import (
-    EquivariantCrystalGCN,
-    TransportNoveltyDistance,
-    read_structure_from_csv,
-)
+from TNovD.gcn import EquivariantCrystalGCN
+from TNovD.TransportNoveltyDistance import TransportNoveltyDistance
+from TNovD.utils import read_structure_from_csv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_MP20 = PROJECT_ROOT / "data" / "mp_20"

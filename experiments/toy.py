@@ -7,12 +7,11 @@ import torch
 from numpy.exceptions import ComplexWarning
 import pickle
 
-from TNovD import (
-    EquivariantCrystalGCN,
-    TransportNoveltyDistance,
+from TNovD.gcn import EquivariantCrystalGCN
+from TNovD.TransportNoveltyDistance import TransportNoveltyDistance
+from TNovD.utils import (
     augment,
     random_lattice_deformation,
-    random_group_substitution,
     random_group_substitution,
     random_supercell,
     random_substitution,

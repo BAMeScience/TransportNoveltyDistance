@@ -6,14 +6,14 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from TNovD import (
-    EquivariantCrystalGCN,
-    TransportNoveltyDistance,
+from TNovD.gcn import EquivariantCrystalGCN
+from TNovD.TransportNoveltyDistance import TransportNoveltyDistance
+from TNovD.utils import (
     coverage_score,
+    relax_structures,
     novelty_score,
     read_structure_from_csv,
 )
-from TNovD.utils import relax_structures
 
 import xtalmet
 
@@ -26,10 +26,10 @@ IMGS_DIR = PROJECT_ROOT / "imgs"
 IMGS_DIR.mkdir(exist_ok=True)
 
 eval_relax = True
-RELAX_MODEL = "small"
-RELAX_STEPS = 50
-RELAX_FMAX = 0.03
-RELAX_SUFFIX = "_mace-small_steps50_fmax0p03.pkl"
+RELAX_MODEL = "medium-0b3"
+RELAX_STEPS = 100
+RELAX_FMAX = 0.02
+RELAX_SUFFIX = "_mace-medium-0b3_fire_steps100_fmax0p02.pkl"
 torch.storage._load_from_bytes = lambda b: torch.load(
     io.BytesIO(b), map_location="cpu", weights_only=False
 )
@@ -122,7 +122,7 @@ checkpoint_path = args.checkpoint
 device = "cuda" if torch.cuda.is_available() else "cpu"
 # --- Load pretrained model ---
 print("Loading pretrained GCN model...")
-model = EquivariantCrystalGCN(hidden_dim=32).to(device)
+model = EquivariantCrystalGCN(hidden_dim=32).float().to(device)
 model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 print("Loaded weights from gcn_fine.pt ✅")
 
